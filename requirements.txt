@@ -1,0 +1,11 @@
+dvc==3.59.1
+mlflow==2.20.2
+
+pyaml==25.1.0
+pydantic==2.1.0.6
+
+pandas==1.17.0
+numpy==2.2.3
+
+torch==2.6.0
+torchvision==0.21.0
