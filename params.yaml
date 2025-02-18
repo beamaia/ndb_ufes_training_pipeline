@@ -1,0 +1,31 @@
+project: # expected options [oscc_notoscc, dys_notdys, oscc_dys, multiclass]
+run_name: ""
+
+stages:
+ - train: true
+ - test: true
+
+dataset:
+ - root: data
+ - patch: patch_images
+ - origin: original_images
+
+hyperparameters:
+ - optimizer:
+   - name: sgd
+   - learning_rate: 0.001
+ - scheduler:
+   - name: reduce_lr_on_plateau
+   - other:
+      - factor: 0.1
+      - patience: 5
+      - min_lr: 0.000001
+ - model:
+   - name:
+   - other:
+ - other:
+   - loss: cross_entropy
+   - loss_weights: true
+   - folds: 5
+   - epochs: 200
+   - batch_size: 30
