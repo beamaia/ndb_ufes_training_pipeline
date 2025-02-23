@@ -61,6 +61,7 @@ class Dataset(BaseModel):
 class Stages(BaseModel):
     train: bool = Field(True, alias="train")
     test: bool = Field(True, alias="test")
+    origin_test: bool = Field(False, alias="origin_test")
     
 class Parameters(BaseModel):
     project: ProjectEnum = Field(alias="project")
@@ -85,7 +86,8 @@ class Parameters(BaseModel):
     
     def __str__(self):
         dashes = "-"*90
-        message = f"""{dashes}
+        message = f"""
+{dashes}
 * Project: {self.project.value} - Run: {self.run_name}
 {dashes}
 * Stages to execute:
@@ -107,14 +109,13 @@ origin: {origin_path}
 {dashes}
 ** Model:
 name: {self.hyperparameters.model.name.value}
-"""
+"""        
         other_model = self.hyperparameters.model.other
         if other_model != None or (isinstance(other_model, dict) and other_model):
             other_model_str = "\n".join([f"{key}: {item}" for key, item in other_model.items()])
             message = message + other_model_str
 
-        message = message + f"""
-{dashes}
+        message = message + f"""{dashes}
 ** Optimizer:
 name: {self.hyperparameters.optimizer.name.value}
 learning_rate: {self.hyperparameters.optimizer.learning_rate}
