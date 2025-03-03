@@ -12,12 +12,23 @@ class ProjectEnum(str, Enum):
     oscc_dys = "oscc_dys"
     multiclass = "multiclass"
 
+class LossEnum(str, MultiValueEnum):
+    cross_entropy = "cross_entropy", "CrossEntropyLoss", "CrossEntropy"
+
 class OptimizerEnum(str, MultiValueEnum):
     sgd = "sgd" , "SGD"
     adam = "Adam", "adam"
 
-class SchedulerEnum(str, Enum):
-    reduce_lr_on_plateau = "reduce_lr_on_plateau"
+class SchedulerEnum(str, MultiValueEnum):
+    reduce_lr_on_plateau = "reduce_lr_on_plateau", "ReduceLROnPlateau"
+    step_r = "step_lr", "StepLR", "steplr"
+
+class TrainTypeEnum(str, MultiValueEnum):
+    holdout = "holdout", "hold_out", "Holdout"
+    cross_validation = "cross_validation", "CrossValidation"
+
+class OriginTest(BaseModel):
+    model_path: str = Field(None, alias="model_path")
 
 class ModelEnum(str, Enum):
     resnet50 = "resnet50"
@@ -31,6 +42,8 @@ class ModelEnum(str, Enum):
 class Optimizer(BaseModel):
     name: OptimizerEnum = Field(OptimizerEnum.sgd, alias="name")
     learning_rate: float = Field(0.001, alias="learning_rate")
+    momentum: float = Field(0.9, alias="momentum")
+    other: dict | None = Field(None, alias="other")
 
 class Scheduler(BaseModel):
     name: SchedulerEnum = Field(SchedulerEnum.reduce_lr_on_plateau, alias="name")
@@ -41,11 +54,12 @@ class Model(BaseModel):
     other: dict | None = Field(None, alias="other")
 
 class OtherHyperparams(BaseModel):
-    loss: str = Field(alias="loss")
+    loss: LossEnum = Field(alias="loss")
     loss_weights: bool  = Field(True, alias="loss_weights")
     folds: int = Field(5, alias="folds", min=1)
     epochs: int = Field(200, alias="epochs", min=1)
     batch_size: int = Field(30, alias="batch_size", min=2)
+    train_type: TrainTypeEnum | None = Field(TrainTypeEnum.cross_validation, alias="train_type")
 
 class Hyperparameters(BaseModel):
     optimizer: Optimizer = Field(alias="optimizer")
@@ -68,6 +82,8 @@ class Parameters(BaseModel):
     stages: Stages = Field(alias="stages")
     dataset: Dataset = Field(alias="dataset")
     hyperparameters: Hyperparameters = Field(alias="hyperparameters")
+    origin_test: OriginTest | None = Field(None, alias="origin_test")
+    device: str = Field("cpu", alias="device")
     run_name: str = Field(alias="run_name")
 
     @model_validator(mode="after")
@@ -136,4 +152,11 @@ weighted_loss: {self.hyperparameters.other.loss_weights}
 folds: {self.hyperparameters.other.folds}
 epochs: {self.hyperparameters.other.epochs}
 batch_size: {self.hyperparameters.other.batch_size}"""
+        
+        if self.origin_test and self.origin_test.model_path:
+            message = message + f"""
+{dashes}
+* Origin test info:
+model_path: {self.origin_test.model_path}
+"""
         return message
