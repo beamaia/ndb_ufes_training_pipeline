@@ -153,10 +153,10 @@ folds: {self.hyperparameters.other.folds}
 epochs: {self.hyperparameters.other.epochs}
 batch_size: {self.hyperparameters.other.batch_size}"""
         
-        if self.origin_test and self.origin_test.model_path:
+        if self.test and self.test.model_path:
             message = message + f"""
 {dashes}
 * Origin test info:
-model_path: {self.origin_test.model_path}
+model_path: {self.test.model_path}
 """
         return message
