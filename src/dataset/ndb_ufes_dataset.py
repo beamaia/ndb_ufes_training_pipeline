@@ -1,14 +1,15 @@
 import os
 from cv2 import imread, IMREAD_COLOR
 import numpy as np
+
 from torch.utils.data import Dataset
+from PIL import Image
 
 class NDBUfesDataset(Dataset):
     def __init__(self, images, labels, classes_dict, transform = None):
         self.images = images
         self.labels = labels
         self.classes = classes_dict
-
         self.transform = transform
 
     def __getitem__(self, index):
@@ -22,6 +23,7 @@ class NDBUfesDataset(Dataset):
         label = self.labels[index]
 
         if self.transform:
+            image = Image.fromarray(image)
             image = self.transform(image)
 
         return image, label
