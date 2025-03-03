@@ -27,7 +27,7 @@ class TrainTypeEnum(str, MultiValueEnum):
     holdout = "holdout", "hold_out", "Holdout"
     cross_validation = "cross_validation", "CrossValidation"
 
-class OriginTest(BaseModel):
+class Test(BaseModel):
     model_path: str = Field(None, alias="model_path")
 
 class ModelEnum(str, Enum):
@@ -82,7 +82,7 @@ class Parameters(BaseModel):
     stages: Stages = Field(alias="stages")
     dataset: Dataset = Field(alias="dataset")
     hyperparameters: Hyperparameters = Field(alias="hyperparameters")
-    origin_test: OriginTest | None = Field(None, alias="origin_test")
+    test: Test | None = Field(None, alias="origin_test")
     device: str = Field("cpu", alias="device")
     run_name: str = Field(alias="run_name")
 
