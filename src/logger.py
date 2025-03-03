@@ -5,11 +5,10 @@ import os
 
 # add color to logs
 coloredlogs.install(level='INFO')
-
+log_file = "logs/log.txt"
 logger = logging.getLogger(__name__)
 # create console handler and set level to info
 ch = logging.StreamHandler(sys.stdout)
-log_file = "logs/log.txt"
 
 if not os.path.exists("logs"):
     os.mkdir("logs")
