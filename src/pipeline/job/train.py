@@ -92,7 +92,7 @@ class TrainJob(BaseJob):
             self.optimizer.step()
 
         train_acc = np.mean(np.array(pred_list) == np.array(labels_list))
-        train_loss = running_loss / (i+1)
+        train_loss = running_loss #/ (i+1)
 
         return train_acc, train_loss
 
@@ -102,12 +102,12 @@ class TrainJob(BaseJob):
             fold_string = ""
         else:
             checkpoint_name = self.checkpoint_root / f"run_{self.params.run_name}_model_{self.params.hyperparameters.model.name.value}_optim_{self.params.hyperparameters.optimizer.name.value}_fold{fold}"
-            fold_string = f"fold{fold}/"
 
         logger.info(f"Start training at {datetime.now()}")
 
         num_epochs = self.params.hyperparameters.other.epochs
         best_loss = np.inf
+        best_loss_acc = 0
 
         checkpoint_epochs = set([int(num_epochs * per / 100) for per in np.arange(0, 100, 10)])
 
@@ -127,16 +127,19 @@ class TrainJob(BaseJob):
             if best_loss > val_loss:
                 best_loss = val_loss
                 torch.save(self.model.state_dict(), str(checkpoint_name) + "_best.pt")
-                self.models_saved.add(str(checkpoint_name) + "_checkpoint.pt")
+                self.models_saved.add(str(checkpoint_name) + "_best.pt")
+                best_loss_acc = val_acc
 
             mlflow.log_metrics({
-                f"{fold_string}train_acc": train_acc,
-                f"{fold_string}train_loss": train_loss,
-                f"{fold_string}val_acc": val_acc,
-                f"{fold_string}val_loss": val_loss,
+                f"train_acc": train_acc,
+                f"train_loss": train_loss,
+                f"val_acc": val_acc,
+                f"val_loss": val_loss,
             }, step=epoch)
 
         logger.info(f"Finished training at {datetime.now()}")
+
+        return train_acc, best_loss_acc
 
     def run(self, train_dataloader, val_dataloader, fold=0):
         if not os.path.exists(self.checkpoint_root):
@@ -147,6 +150,7 @@ class TrainJob(BaseJob):
 
         self.loss_func = self._prepare_loss_func(train_dataloader.dataset)
 
-        self._train(train_dataloader, val_dataloader, fold)
-
+        train_acc, best_loss_acc = self._train(train_dataloader, val_dataloader, fold)
+        
+        return train_acc, best_loss_acc
 
