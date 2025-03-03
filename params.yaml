@@ -13,20 +13,26 @@ dataset:
 
 hyperparameters:
   optimizer:
-    name: adam
+    name: sgd
     learning_rate: 0.001
+    momentum: 0.9
   scheduler:
-    name: reduce_lr_on_plateau
+    name: step_lr
     other:
       factor: 0.1
       patience: 5
       min_lr: 0.000001
   model:
-    name: resnet50
+    name: densenet121
     other:
   other:
     loss: cross_entropy
-    loss_weights: true
+    loss_weights: false
     folds: 5
-    epochs: 200
+    epochs: 10
     batch_size: 30
+    train_type: cross_validation
+
+device: mps
+# origin_test:
+#   model_path:
