@@ -10,21 +10,43 @@ import torch
 import tqdm
 
 from .job import BaseJob, JobType
+from src import logger
+from src.models.model_selector import ModelSelector
 
 class TestJob(BaseJob):
     model = None
     loss_func = None
 
-    def _load_model(self, path):
-        # model class initialized
-        model = None
+    def _prepare_model(self, path):
+        model_str = self.params.hyperparameters.model.name.value
+        model_obj =  ModelSelector(model_str, num_classes=self.num_classes).model.to(self.device)
 
         if not os.path.exists(path):
             raise FileNotFoundError(f"File to path {path} not found.")
+        
+        print("models state dict", model_obj_keys.state_dict())
+        model_obj_keys = [key for key, _ in model_obj_keys.state_dict().item()]
+        
+        check_model_dict = torch.load(path, weights_only=True)
+        check_model_keys = [key for key, _ in check_model_dict.item()]
 
-        torch.load()
-        return model
+        if all([ True if key in model_obj_keys else False for key in check_model_keys]):
+            model_obj.load_state_dict(check_model_dict)
+        else:
+            print(check_model_keys)
+            print(model_obj_keys)
 
+        try:
+            model_obj.load_state_dict(torch.load(path, weights_only=True))
+        except Exception as e:
+            logger.error("Exception caught while trying to load model.")
+            logger.error(e.__str__)
+            logger.error(e.args)
+            logger.error(e.__traceback__)
+            quit()
+
+        return model_obj
+    
     def _create_artifacts(self, pred, labels, images):
         num_classes = set(labels)
 
@@ -66,17 +88,22 @@ class TestJob(BaseJob):
                 labels_list.extend(labels.cpu().numpy())
 
         test_acc = np.mean(np.array(pred_list) == np.array(labels_list))
-        test_loss = running_loss / (i + 1) if self.loss_func else None
+        test_loss = running_loss if self.loss_func else None #running_loss / (i + 1) if self.loss_func else None
 
         # if create_artifact:
         #   artifacts = self._create_artifacts(pred, labels, images)
 
         return test_acc, test_loss, artifacts
     
-    def run (self, test_dataloader, model=None, loss_func=None, create_artifacts=True):
-        self.model = model if model else self._load_model()
+    def run (self, test_dataloader, model=None, loss_func=None, create_artifacts=True, path=None, stage="val"):
+        self.model = model
         self.loss_func = loss_func
 
+        if not self.params.stages.train:
+            print("Not implemented yet")
+        elif stage == "test":
+            self.model = self._prepare_model(path)
+        
         test_acc, test_loss, artifacts = self._test(test_dataloader, create_artifacts)
 
         if not create_artifacts:
