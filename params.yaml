@@ -27,12 +27,13 @@ hyperparameters:
     other:
   other:
     loss: cross_entropy
-    loss_weights: false
+    loss_weights: true
     folds: 5
-    epochs: 10
+    epochs: 200
     batch_size: 30
     train_type: cross_validation
 
 device: mps
-# origin_test:
+
+# test:
 #   model_path:
