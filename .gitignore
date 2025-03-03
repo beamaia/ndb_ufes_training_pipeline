@@ -176,3 +176,6 @@ data/*
 
 # mac
 .DS_Store
+
+# logs
+logs/*
