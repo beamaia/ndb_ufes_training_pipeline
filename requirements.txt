@@ -1,11 +1,18 @@
-dvc==3.59.1
-mlflow==2.20.2
-
 pyaml==25.1.0
 pydantic==2.1.0.6
+aenum==3.1.15
+coloredlogs==15.0.1
 
 pandas==1.17.0
 numpy==2.2.3
+opencv-python==4.11.0.86
+
+dvc==3.59.1
+dvc-s3==3.2.0
+mlflow==2.20.2
 
 torch==2.6.0
 torchvision==0.21.0
+
+captum
+
