@@ -37,8 +37,8 @@ class Pipeline(ABC):
         train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
         val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True)
 
-        train_acc, val_acc = self.train_job.run(train_dataloader, val_dataloader, fold=fold_num)
-        return train_acc, val_acc
+        metrics, best_loss_metrics = self.train_job.run(train_dataloader, val_dataloader, fold=fold_num)
+        return metrics, best_loss_metrics
 
 
     def train(self):
@@ -52,24 +52,26 @@ class Pipeline(ABC):
             
         elif train_type == "cross_validation":
             num_folds = self.params.hyperparameters.other.folds
-            train_acc_list, val_acc_list = [], []
-            
+            val_acc_list, val_balanced_acc_list, val_recall_list, val_precision_list = [], [], [], []
+
             for fold_num in range(1, num_folds + 1):
                 with mlflow.start_run(nested=True, run_name=f"fold_{fold_num}"):
                     run = mlflow.active_run()
                     run_id = run.info.run_id
                     self.train_run_ids.append(run_id)
-
+                    
+                    logger.info("---------------------------------")
                     logger.info(f"| Starting fold {fold_num} |")
                     mlflow.log_param("fold", fold_num)
-                    train_acc, val_acc = self._inner_train(fold_num)
+                    _, best_val_metrics = self._inner_train(fold_num)
 
-                    train_acc_list.append(train_acc)
-                    val_acc_list.append(val_acc)
+                    val_acc_list.append(best_val_metrics["val_acc"])
+                    val_balanced_acc_list.append(best_val_metrics["val_balanced_acc"])
+                    val_recall_list.append(best_val_metrics["val_recall"])
+                    val_precision_list.append(best_val_metrics["val_precision"])
 
                     models_path = self.train_job.models_saved
                     best_model = [best for best in models_path if "best.pt" in best and f"fold{fold_num}" in best]
-                    print(models_path)
                     
                     if not len(best_model):
                         raise ValueError("Best model not found.")
@@ -82,16 +84,29 @@ class Pipeline(ABC):
                     mlflow.log_param("model_path", best_model)
 
                     logger.info(f"| Finished training fold {fold_num}|")
+                    logger.info(f"Best model metrics | Accuracy: {best_val_metrics["val_acc"] * 100: 0.3f}% | Balanced accuracy: {best_val_metrics["val_balanced_acc"] * 100: 0.3f}% | Recall: {best_val_metrics["val_recall"] * 100: 0.3f}% | Precision {best_val_metrics["val_precision"] * 100: 0.3f}%")
+                    logger.info("---------------------------------\n")
+                    
+                metrics = {f"fold_{key}": item for key, item in best_val_metrics.items()}
 
-                mlflow.log_metrics({
-                    "val_accuracy": val_acc,
-                }, step=fold_num)
+                mlflow.log_metrics(metrics, step=fold_num)
                 
+            avg_std_metrics = {
+                "avg_val_acc": np.mean(val_acc_list), 
+                "avg_val_balanced_acc": np.mean(val_balanced_acc_list), 
+                "avg_val_recall": np.mean(val_recall_list), 
+                "avg_val_precision": np.mean(val_precision_list), 
+                "std_val_acc": np.std(val_acc_list), 
+                "std_val_balanced_acc": np.std(val_balanced_acc_list), 
+                "std_val_recall": np.std(val_recall_list), 
+                "std_val_precision": np.std(val_precision_list), 
+            }
+            mlflow.log_metrics(avg_std_metrics)
+            logger.info(f"Average metrics during training | Accuracy: {avg_std_metrics["avg_val_acc"] * 100: 0.3f}% \u00B12 {avg_std_metrics["std_val_acc"] * 100: 0.3f}")
+            logger.info(f"Average metrics during training | Balanced Accuracy: {avg_std_metrics["avg_val_balanced_acc"] * 100: 0.3f}% \u00B12 {avg_std_metrics["std_val_balanced_acc"] * 100: 0.3f}")
+            logger.info(f"Average metrics during training | Recall: {avg_std_metrics["avg_val_recall"] * 100: 0.3f}% \u00B12 {avg_std_metrics["std_val_recall"] * 100: 0.3f}")
+            logger.info(f"Average metrics during training | Precision: {avg_std_metrics["avg_val_precision"] * 100: 0.3f}% \u00B12 {avg_std_metrics["std_val_precision"] * 100: 0.3f}")
 
-            mlflow.log_metrics({
-                "avg_train_accuracy": np.mean(train_acc_list), 
-                "avg_val_accuracy": np.mean(val_acc_list)
-            })
         else:
             raise ValueError(f"String value {train_type} invalid for chosing training type of job.")   
         
