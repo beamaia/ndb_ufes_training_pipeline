@@ -39,7 +39,7 @@ class OptimizerSchedulerSelector(ABC):
             mode = self.scheduler_params.get('mode', "min")
             factor = self.scheduler_params.get('factor', 0.1)
             patience = self.scheduler_params.get("patience", 10)
-            min_lr = self.scheduler.params.get("min_lr", 0)
-            return ReduceLROnPlateau(self.optimizer)
+            min_lr = self.scheduler_params.get("min_lr", 0)
+            return ReduceLROnPlateau(self.optimizer, min_lr=min_lr, mode=mode, factor=factor, patience=patience)
         else:
             raise ValueError(f"String value '{self.scheduler_name}' invalid for chosing scheduler.")
