@@ -9,6 +9,8 @@ import numpy as np
 import torch
 import tqdm
 
+from sklearn.metrics import balanced_accuracy_score, recall_score, precision_score
+
 from .job import BaseJob, JobType
 from src import logger
 from src.models.model_selector import ModelSelector
@@ -67,7 +69,7 @@ class TestJob(BaseJob):
         correct_random_images = {class_id: random.sample(images_subset, 5) for class_id, images_subset in correct_classes_images.items()}
 
 
-    def _test(self, test_dataloader, create_artifacts=True):
+    def _test(self, test_dataloader, create_artifacts=True, stage="val"):
         artifacts = None
         self.model.eval()
 
@@ -88,12 +90,26 @@ class TestJob(BaseJob):
                 labels_list.extend(labels.cpu().numpy())
 
         test_acc = np.mean(np.array(pred_list) == np.array(labels_list))
-        test_loss = running_loss if self.loss_func else None #running_loss / (i + 1) if self.loss_func else None
+        test_loss = running_loss / (i + 1) if self.loss_func else None
+        test_balanced_acc = balanced_accuracy_score(labels_list, pred_list)
+        test_recall = recall_score(labels_list, pred_list)
+        test_precision = precision_score(labels_list, pred_list)
+
+        metrics =  {
+            f"{stage}_acc": test_acc
+        }
+
+        if self.loss_func:
+            metrics[f"{stage}_loss"] =  test_loss
+
+        metrics[f"{stage}_balanced_acc"] =  test_balanced_acc
+        metrics[f"{stage}_recall"] =  test_recall
+        metrics[f"{stage}_precision"] =  test_precision
 
         # if create_artifact:
         #   artifacts = self._create_artifacts(pred, labels, images)
 
-        return test_acc, test_loss, artifacts
+        return metrics, artifacts
     
     def run (self, test_dataloader, model=None, loss_func=None, create_artifacts=True, path=None, stage="val"):
         self.model = model
@@ -104,8 +120,8 @@ class TestJob(BaseJob):
         elif stage == "test":
             self.model = self._prepare_model(path)
         
-        test_acc, test_loss, artifacts = self._test(test_dataloader, create_artifacts)
+        metrics, artifacts = self._test(test_dataloader, create_artifacts, stage)
 
         if not create_artifacts:
-            return test_acc, test_loss
-        return test_acc, test_loss, artifacts
+            return metrics
+        return metrics, artifacts
