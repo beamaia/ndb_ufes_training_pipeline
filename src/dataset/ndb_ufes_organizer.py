@@ -4,6 +4,9 @@ import pathlib as pl
 import pandas as pd
 
 from torchvision import transforms
+from torchvision.transforms import v2
+from torch import bfloat16
+import torch
 
 from src import logger
 
@@ -19,7 +22,7 @@ class NDBUfesOrganizer(ABC):
             self.test = pd.read_csv(root_path / f"{folds_division_path}_test.csv")
             self.origin_test = pd.read_csv(root_path / f"origin_test.csv")
             
-    def __init__(self, patch: str, origin: str, root: str, task: str):
+    def __init__(self, patch: str, origin: str, root: str, task: str, node_type:str):
         self.root_path = pl.Path(root)
         self.patch_path = pl.Path(self.root_path / patch)
         self.origin_path = pl.Path(self.root_path / origin)
@@ -32,15 +35,20 @@ class NDBUfesOrganizer(ABC):
         self.data = self.DataTable(self.root_path, self.folds_division_path)
         self.origin_classes_dict = self._define_classes("multiclass")
 
-        self.train_transform = transforms.Compose([transforms.Resize((224, 224)),
+        self.node_type = getattr(torch, node_type)
+        self.train_transform = transforms.Compose(  
+            [transforms.Resize((224, 224)),
                                                    transforms.ToTensor(),
-                                                   transforms.RandomHorizontalFlip(0.5),
-                                                   transforms.RandomVerticalFlip(0.5),
-                                                   transforms.RandomApply([transforms.RandomRotation(10)], 0.25),
-                                                   transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
+                                                   transforms.ConvertImageDtype(self.node_type),
+                                                #    transforms.RandomHorizontalFlip(0.5),
+                                                #    transforms.RandomVerticalFlip(0.5),
+                                                #    transforms.RandomApply([transforms.RandomRotation(10)], 0.25),
+                                                #    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
+        ])
 
         self.test_transform = transforms.Compose([transforms.Resize((224, 224)),
-                                                  transforms.ToTensor()])
+                                                  transforms.ToTensor(),
+                                                  transforms.ConvertImageDtype(self.node_type)])
 
     def _define_task_file(self):
         if self.task == "oscc_bin":
