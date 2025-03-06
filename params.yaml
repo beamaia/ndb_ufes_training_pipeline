@@ -14,7 +14,7 @@ dataset:
 hyperparameters:
   optimizer:
     name: sgd
-    learning_rate: 0.001
+    learning_rate: 0.01
     momentum: 0.9
   scheduler:
     name: step_lr
@@ -34,6 +34,7 @@ hyperparameters:
     train_type: cross_validation
 
 device: mps
+node_type: bfloat16
 
 # test:
 #   model_path:
