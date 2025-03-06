@@ -3,7 +3,7 @@ class EarlyStopper:
     Stops after either no loss improvements since best loss (mode all)
     or after no loss improvements of size delta positive or negative (mode local)
     """
-    def __init__(self, patience=10, min_delta=0.001, mode="all"):
+    def __init__(self, patience=20, min_delta=0.001, mode="all"):
         self.patience = patience
         self.min_delta = min_delta
         self.counter = 0
