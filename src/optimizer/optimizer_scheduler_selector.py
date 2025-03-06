@@ -1,7 +1,7 @@
 from abc import ABC
 
-from torch.optim.lr_scheduler import StepLR
-from torch.optim import SGD
+from torch.optim.lr_scheduler import StepLR, ReduceLROnPlateau
+from torch.optim import SGD, Adam
 
 class OptimizerSchedulerSelector(ABC):
     def __init__(self, optimizer, 
@@ -24,7 +24,9 @@ class OptimizerSchedulerSelector(ABC):
 
     def _select_optimizer(self, model_params):
         if self.optimizer_name == "sgd":
-            return SGD(model_params, self.learning_rate, self. momentum)
+            return SGD(model_params, self.learning_rate, self.momentum)
+        elif self.optimizer_name=="adam":
+            return Adam(model_params, self.learning_rate)
         else:
             raise ValueError(f"String value '{self.optimizer_name}' invalid for chosing optimizer.")
         
@@ -33,5 +35,11 @@ class OptimizerSchedulerSelector(ABC):
             step_size = self.scheduler_params.get('step_size', 30)
             gamma = self.scheduler_params.get('gamma', 0.1)
             return StepLR(self.optimizer, step_size=step_size, gamma=gamma)
+        elif self.scheduler_name == "reduce_lr_on_plateau":
+            mode = self.scheduler_params.get('mode', "min")
+            factor = self.scheduler_params.get('factor', 0.1)
+            patience = self.scheduler_params.get("patience", 10)
+            min_lr = self.scheduler.params.get("min_lr", 0)
+            return ReduceLROnPlateau(self.optimizer)
         else:
             raise ValueError(f"String value '{self.scheduler_name}' invalid for chosing scheduler.")
