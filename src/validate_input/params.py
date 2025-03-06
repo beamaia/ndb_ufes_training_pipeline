@@ -12,6 +12,9 @@ class ProjectEnum(str, Enum):
     oscc_dys = "oscc_dys"
     multiclass = "multiclass"
 
+    def __str__(self):
+        return self.value
+
 class LossEnum(str, MultiValueEnum):
     cross_entropy = "cross_entropy", "CrossEntropyLoss", "CrossEntropy"
 
