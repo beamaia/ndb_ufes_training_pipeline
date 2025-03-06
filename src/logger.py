@@ -8,7 +8,6 @@ coloredlogs.install(level='INFO')
 log_file = "logs/log.txt"
 logger = logging.getLogger(__name__)
 # create console handler and set level to info
-ch = logging.StreamHandler(sys.stdout)
 
 if not os.path.exists("logs"):
     os.mkdir("logs")
@@ -25,6 +24,7 @@ if os.path.exists(log_file):
         break
     
     log_file = new_file
+ch = logging.StreamHandler(sys.stdout) 
 fileh = logging.FileHandler(log_file)
 
 # create formatter
@@ -34,6 +34,7 @@ formatter = logging.Formatter(
 
 # add formatter to ch
 ch.setFormatter(formatter)
+fileh.setFormatter(formatter)
 
 # add ch to logger
 logger.addHandler(ch)
