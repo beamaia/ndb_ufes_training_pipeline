@@ -19,7 +19,9 @@ if __name__ == "__main__":
 
     logger.info(params_model)
 
-    data_organizer = NDBUfesOrganizer(task=params_model.project.value,  **params_model.dataset.model_dump())
+    data_organizer = NDBUfesOrganizer(task=params_model.project.value,
+                                      node_type=params_model.node_type,
+                                      **params_model.dataset.model_dump())
 
     experiment_id = mlflow.set_experiment(experiment_name=params_model.project.value)
 
