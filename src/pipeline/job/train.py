@@ -108,11 +108,21 @@ class TrainJob(BaseJob):
             train_precision=train_precision
         )
 
+    def _create_artifacts_dir(self):
+        artifact_root = self.checkpoint_root  / f"project_{self.params.project}_run_{self.params.run_name}"
+
+        if not os.path.exists(artifact_root):
+            os.mkdir(artifact_root)
+        
+        self.checkpoint_root = artifact_root
+
     def _train(self, train_dataloader, val_dataloader, fold=0):
         if not fold:
-            checkpoint_name = self.checkpoint_root / f"run_{self.params.run_name}_model_{self.params.hyperparameters.model.name.value}_optim_{self.params.hyperparameters.optimizer.name.value}"
+            checkpoint_name = self.checkpoint_root / f"model_{self.params.hyperparameters.model.name.value}_optim_{self.params.hyperparameters.optimizer.name.value}"
         else:
-            checkpoint_name = self.checkpoint_root / f"run_{self.params.run_name}_model_{self.params.hyperparameters.model.name.value}_optim_{self.params.hyperparameters.optimizer.name.value}_fold{fold}"
+            fold_path = self.checkpoint_root / f"fold_{fold}"
+            os.mkdir(fold_path)
+            checkpoint_name = fold_path / f"model_{self.params.hyperparameters.model.name.value}_optim_{self.params.hyperparameters.optimizer.name.value}"
 
         logger.info(f"Start training at {datetime.now()}")
 
@@ -126,7 +136,7 @@ class TrainJob(BaseJob):
 
         for epoch in tqdm(range(num_epochs)):
             train_metrics = self._inner_train_loop(train_dataloader)
-            val_metrics = self._test.run(val_dataloader, 
+            val_metrics, _ = self._test.run(val_dataloader, 
                                                   model=self.model, 
                                                   loss_func=self.loss_func, 
                                                   create_artifacts=False)
@@ -147,12 +157,11 @@ class TrainJob(BaseJob):
                 self.models_saved.add(str(checkpoint_name) + "_best.pt")
                 best_loss_metrics = {key:item for key, item in metrics.items() if "val" in key}
                 
-
             mlflow.log_metrics(metrics, step=epoch)
 
             if early_stopper.early_stop(metrics["val_loss"]):
                 break
-
+        
         logger.info(f"Finished training at {datetime.now()}")
         
         return metrics, best_loss_metrics
@@ -167,7 +176,8 @@ class TrainJob(BaseJob):
         self.optimizer, self.scheduler = self._prepare_optim_sched()
 
         self.loss_func = self._prepare_loss_func(train_dataloader.dataset)
-
+        
+        self._create_artifacts_dir()
         metrics, best_loss_metrics = self._train(train_dataloader, val_dataloader, fold)
         
         return metrics, best_loss_metrics
