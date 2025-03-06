@@ -83,7 +83,8 @@ class Parameters(BaseModel):
     dataset: Dataset = Field(alias="dataset")
     hyperparameters: Hyperparameters = Field(alias="hyperparameters")
     test: Test | None = Field(None, alias="origin_test")
-    device: str = Field("cpu", alias="device")
+    device: str = Field("mps", alias="device")
+    node_type: str = Field("bfloat16", alias="node_type")
     run_name: str = Field(alias="run_name")
 
     @model_validator(mode="after")
