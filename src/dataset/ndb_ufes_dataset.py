@@ -6,10 +6,11 @@ from torch.utils.data import Dataset
 from PIL import Image
 
 class NDBUfesDataset(Dataset):
-    def __init__(self, images, labels, classes_dict, transform = None):
+    def __init__(self, images, labels, classes_dict, aug = None, transform = None):
         self.images = images
         self.labels = labels
         self.classes = classes_dict
+        self.aug = aug
         self.transform = transform
 
     def __getitem__(self, index):
@@ -22,8 +23,11 @@ class NDBUfesDataset(Dataset):
         image = imread(self.images[index], IMREAD_COLOR)
         label = self.labels[index]
 
+        image = Image.fromarray(image)
+        if self.aug:
+            image = self.aug.augment_image(np.array(image)).copy()
+
         if self.transform:
-            image = Image.fromarray(image)
             image = self.transform(image)
 
         return image, label
