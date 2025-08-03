@@ -75,6 +75,12 @@ class TestJob(BaseJob):
 
     def _test(self, test_dataloader, create_artifacts=True, stage="val"):
         artifacts = None
+        if self.params.hyperparameters.model.name.lower() == "vgg16":
+            device = "cpu"
+            self.model = self.model.cpu()
+        else:
+            device = self.device
+
         self.model.eval()
 
         with torch.no_grad():
@@ -82,7 +88,7 @@ class TestJob(BaseJob):
             pred_list, labels_list = [], []
 
             for i, (images, labels) in enumerate(test_dataloader):
-                images, labels = images.to(self.device), labels.to(self.device)
+                images, labels = images.to(device), labels.to(device)
                 outputs = self.model(images)
 
                 if self.loss_func:
@@ -116,6 +122,8 @@ class TestJob(BaseJob):
         })
         # if create_artifact:
         #   artifacts = self._create_artifacts(pred, labels, images)
+
+        self.model.to(self.device)
 
         return metrics, true_pred_df, artifacts
     
