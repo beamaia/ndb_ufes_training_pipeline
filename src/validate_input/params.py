@@ -35,7 +35,7 @@ class Test(BaseModel):
 
 class ModelEnum(str, Enum):
     resnet50 = "resnet50"
-    mobilenet = "mobilenet"
+    mobilenetv2 = "mobilenetv2"
     densenet121 = "densenet121"
     vgg16 = "vgg16"
     coat_lite_small = "coat_lite_small"
