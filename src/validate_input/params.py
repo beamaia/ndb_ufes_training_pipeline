@@ -38,6 +38,7 @@ class ModelEnum(str, Enum):
     mobilenetv2 = "mobilenetv2"
     densenet121 = "densenet121"
     vgg16 = "vgg16"
+    efficientnetb4 = "efficientnetb4"
     coat_lite_small = "coat_lite_small"
     pit_s_distilled_224 = "pit_s_distilled_224"
     vit_small_patch_384 = "vit_small_patch16_384"
