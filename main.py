@@ -1,6 +1,8 @@
 import os
 import yaml
 import mlflow
+from dotenv import load_dotenv 
+load_dotenv()
 
 from src.dataset import NDBUfesOrganizer, NDBUfesDataset
 from src.pipeline import Pipeline
@@ -35,8 +37,11 @@ if __name__ == "__main__":
         pipeline = Pipeline(params_model, data_organizer)
         pipeline.log_params()
         
-        if params_model.stages.train == True:
+        if params_model.stages.train:
             pipeline.train()
 
+        if params_model.stages.test:    
+            pipeline.test()
+
         mlflow.log_artifact(log_file)
-    
+          
