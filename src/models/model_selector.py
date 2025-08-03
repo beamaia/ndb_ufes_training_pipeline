@@ -1,5 +1,6 @@
 from torchvision import models
 from .densenet121 import DenseNet121
+from .mobilenet import MobileNetv2
 
 class ModelSelector:
     def __init__(self, model_name, weights="default", **kwargs):
@@ -10,7 +11,9 @@ class ModelSelector:
     def _select_model(self, num_classes, **kwargs):
         model_name = self.model_name.lower()
         if model_name == 'densenet121':
-            model =  DenseNet121(weights=models.DenseNet121_Weights.IMAGENET1K_V1, num_classes=num_classes)
+            model =  DenseNet121(num_classes=num_classes)
+        elif model_name == "mobilenetv2":
+            model = MobileNetv2(num_classes=num_classes)
         else:
             raise ValueError(f"String value {model_name} invalid for choosing model type.")
         
