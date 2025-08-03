@@ -7,6 +7,8 @@ from torchvision import transforms
 from torchvision.transforms import v2
 from torch import bfloat16
 import torch
+from imgaug import augmenters as iaa
+
 
 from src import logger
 
@@ -36,20 +38,38 @@ class NDBUfesOrganizer(ABC):
         self.origin_classes_dict = self._define_classes("multiclass")
 
         self.node_type = getattr(torch, node_type)
-        self.train_transform = transforms.Compose(  
-            [transforms.Resize((224, 224)),
-                                                   transforms.ToTensor(),
+        self.aug = self._configure_aug((224, 224))
+
+        self.train_transform = transforms.Compose([transforms.ToTensor(),
                                                    transforms.ConvertImageDtype(self.node_type),
-                                                #    transforms.RandomHorizontalFlip(0.5),
-                                                #    transforms.RandomVerticalFlip(0.5),
-                                                #    transforms.RandomApply([transforms.RandomRotation(10)], 0.25),
-                                                #    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
         ])
 
-        self.test_transform = transforms.Compose([transforms.Resize((224, 224)),
-                                                  transforms.ToTensor(),
+        self.test_transform = transforms.Compose([transforms.ToTensor(),
                                                   transforms.ConvertImageDtype(self.node_type)])
 
+    def _configure_aug(self, size):
+        return iaa.Sequential([
+            iaa.Sometimes(0.25, iaa.Affine(scale={"x": (1.0, 2.0), "y": (1.0, 2.0)})),
+            iaa.Scale(size),
+            iaa.Fliplr(0.5),
+            iaa.Flipud(0.2),
+            iaa.Sometimes(0.25, iaa.Affine(rotate=(-120, 120), mode='symmetric')),
+            iaa.Sometimes(0.25, iaa.GaussianBlur(sigma=(0, 3.0))),
+
+            # noise
+            iaa.Sometimes(0.1,
+                          iaa.OneOf([
+                              iaa.Dropout(p=(0, 0.05)),
+                              iaa.CoarseDropout(0.02, size_percent=0.25)
+                          ])),
+
+            iaa.Sometimes(0.25,
+                          iaa.OneOf([
+                              iaa.Add((-15, 15), per_channel=0.5), # brightness
+                              iaa.AddToHueAndSaturation(value=(-10, 10), per_channel=True)
+                          ])),
+
+        ])
     def _define_task_file(self):
         if self.task == "oscc_bin":
             return self.oscc_bin_root
