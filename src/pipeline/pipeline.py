@@ -153,7 +153,7 @@ class Pipeline(ABC):
                 metrics = {f"test_{key}": item for key, item in metrics.items()}
 
                 mlflow.log_metrics(metrics, run_id=run_id)
-                breakpoint()
+                
                 true_pred_df.columns = [f"test_{name}" for name in true_pred_df.columns]
                 temp_csv_path = f"true_pred_table_{run_id}.csv"
                 true_pred_df.to_csv(temp_csv_path, index=False)
