@@ -3,8 +3,6 @@ import logging
 import coloredlogs
 import os
 
-# add color to logs
-coloredlogs.install(level='INFO')
 log_file = "logs/log.txt"
 logger = logging.getLogger(__name__)
 # create console handler and set level to info
@@ -24,6 +22,13 @@ if os.path.exists(log_file):
         break
     
     log_file = new_file
+
+for handler in logger.handlers[:]:
+    logger.removeHandler(handler)
+logger.propagate=False
+
+# add color to logs
+coloredlogs.install(level='INFO')
 ch = logging.StreamHandler(sys.stdout) 
 fileh = logging.FileHandler(log_file)
 
