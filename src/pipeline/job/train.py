@@ -97,8 +97,8 @@ class TrainJob(BaseJob):
         train_acc = np.mean(np.array(pred_list) == np.array(labels_list))
         train_loss = running_loss / (i+1)
         train_balanced_acc = balanced_accuracy_score(labels_list, pred_list)
-        train_recall = recall_score(labels_list, pred_list)
-        train_precision = precision_score(labels_list, pred_list)
+        train_recall = recall_score(labels_list, pred_list, average='micro' if len(np.unique(labels_list) > 2) else None)
+        train_precision = precision_score(labels_list, pred_list, average='micro' if len(np.unique(labels_list) > 2) else None)
 
         return dict(
             train_acc=train_acc,
@@ -137,15 +137,16 @@ class TrainJob(BaseJob):
         for epoch in tqdm(range(num_epochs)):
             train_metrics = self._inner_train_loop(train_dataloader)
             val_metrics, _ = self._test.run(val_dataloader, 
-                                                  model=self.model, 
-                                                  loss_func=self.loss_func, 
-                                                  create_artifacts=False)
+                                            model=self.model, 
+                                            loss_func=self.loss_func, 
+                                            create_artifacts=False)
             
             metrics = train_metrics | val_metrics
 
             logger.info(f"Epoch: {epoch + 1} | Train accuracy: {metrics["train_acc"] * 100: 0.3f}% | Train loss: {metrics["train_loss"]:0.3f} | Validation accuracy: {metrics["val_acc"] * 100: 0.3f}% | Validation loss: {metrics["val_loss"]: 0.3f}")
             logger.info(f"Epoch: {epoch + 1} | Other train metrics | Balanced accuracy: {metrics["train_balanced_acc"] * 100: 0.3f}% | Recall: {metrics["train_recall"] * 100: 0.3f}% | Precision {metrics["train_precision"] * 100: 0.3f}%")
             logger.info(f"Epoch: {epoch + 1} | Other validation metrics | Balanced accuracy: {metrics["val_balanced_acc"] * 100: 0.3f}% | Recall: {metrics["val_recall"] * 100: 0.3f}% | Precision {metrics["val_precision"] * 100: 0.3f}%")
+            logger.info(f"Epoch: {epoch + 1} | Learning rate: {self.optimizer.param_groups[0]['lr']}")
 
             if epoch in checkpoint_epochs:
                 torch.save(self.model.state_dict(), str(checkpoint_name) + "_checkpoint.pt")
@@ -158,7 +159,9 @@ class TrainJob(BaseJob):
                 best_loss_metrics = {key:item for key, item in metrics.items() if "val" in key}
                 
             mlflow.log_metrics(metrics, step=epoch)
+            mlflow.log_metric("learning_rate", self.optimizer.param_groups[0]['lr'], step=epoch)
 
+            self.scheduler.step(metrics["val_loss"])
             if early_stopper.early_stop(metrics["val_loss"]):
                 break
         
