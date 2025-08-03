@@ -1,7 +1,12 @@
+PYTORCH_ENABLE_MPS_FALLBACK=1
 # ---------- oscc_bin ----------
+sed -i '' 's/project: dys_bin/project: oscc_bin/' params.yaml
 # mobilenetv2
+sed -i '' 's/name: vgg16/name: mobilenetv2/' params.yaml
+python3 main.py
 
 # densenet121
+sed -i '' 's/name: mobilenetv2/name: densenet121/' params.yaml
 python3 main.py
 
 # resnet50
