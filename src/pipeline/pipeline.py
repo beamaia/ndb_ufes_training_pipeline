@@ -11,6 +11,7 @@ from .job import TestJob, TrainJob
 from src.utils import dictionary
 from src.dataset import NDBUfesDataset
 from src import logger
+import os
 
 class Pipeline(ABC):
     train_job = None
@@ -29,9 +30,11 @@ class Pipeline(ABC):
 
         train_dataset = NDBUfesDataset(train_paths, train_labels, 
                                        classes_dict=self.data_organizer.train_classes_dict, 
+                                       aug=self.data_organizer.aug,
                                        transform=self.data_organizer.train_transform)
         val_dataset = NDBUfesDataset(val_paths, val_labels, 
                                      classes_dict=self.data_organizer.train_classes_dict,
+                                     aug=None,
                                      transform=self.data_organizer.test_transform)
         
         train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
@@ -71,7 +74,7 @@ class Pipeline(ABC):
                     val_precision_list.append(best_val_metrics["val_precision"])
 
                     models_path = self.train_job.models_saved
-                    best_model = [best for best in models_path if "best.pt" in best and f"fold{fold_num}" in best]
+                    best_model = [best for best in models_path if "best.pt" in best and f"fold_{fold_num}" in best]
                     
                     if not len(best_model):
                         raise ValueError("Best model not found.")
@@ -113,11 +116,53 @@ class Pipeline(ABC):
             
     def test(self):
         if self.params.stages.train:
+            batch_size = self.params.hyperparameters.other.batch_size
             (test_paths, test_labels) = self.data_organizer.data_per_fold(fold=0, train=False)
 
             for run_id in self.train_run_ids:
-                run = mlflow.search_runs()
-            
+                try:
+                    run_mf = mlflow.search_runs(filter_string=f"attributes.run_id = '{run_id}'", search_all_experiments=True)
+                    path_to_artifact = run_mf["artifact_uri"][0] + "/model"
+                    best_model_path = mlflow.artifacts.list_artifacts((path_to_artifact))[0]
+                    best_model_path = f"{run_mf["artifact_uri"][0]}/{best_model_path.path}"
+                    logger.info(f"Found run_id = {run_id}")
+                except Exception as e:
+                    logger.error(f"Run id = {run_id} was not found.")
+                    logger.error(f"Error found: {e}")
+                    continue
+                
+                try:
+                    logger.info(f"Downloading model {best_model_path}")
+                    best_model_local_path = mlflow.artifacts.download_artifacts(best_model_path, dst_path="best_model")
+                except Exception as e:
+                    logger.error(f"Unnabled to download model.")
+                    continue
+
+                test_job = TestJob(self.params, 
+                                   self.data_organizer.train_num_classes,
+                                   best_model_local_path)
+
+                test_paths, test_labels = self.data_organizer.data_per_fold(fold=0, train=False)
+                test_dataset = NDBUfesDataset(test_paths, test_labels, 
+                                     classes_dict=self.data_organizer.train_classes_dict,
+                                     aug=None,
+                                     transform=self.data_organizer.test_transform)
+                test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
+
+                metrics, true_pred_df = test_job.run(test_dataloader, create_artifacts=False)
+                metrics = {f"test_{key}": item for key, item in metrics.items()}
+
+                mlflow.log_metrics(metrics, run_id=run_id)
+                breakpoint()
+                true_pred_df.columns = [f"test_{name}" for name in true_pred_df.columns]
+                temp_csv_path = f"true_pred_table_{run_id}.csv"
+                true_pred_df.to_csv(temp_csv_path, index=False)
+                mlflow.log_artifact(temp_csv_path, artifact_path="true_pred_table", run_id=run_id)
+
+                if os.path.exists(best_model_local_path):
+                    os.remove(best_model_local_path)
+                    os.remove(temp_csv_path)
+
 
     def origin_test(self):
         pass
