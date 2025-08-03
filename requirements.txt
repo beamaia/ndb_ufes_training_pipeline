@@ -1,9 +1,9 @@
-pyaml==25.1.0
-pydantic==2.1.0.6
+pyyaml==6.0.2
+pydantic==2.11.7
 aenum==3.1.15
 coloredlogs==15.0.1
 
-pandas==1.17.0
+pandas==2.3.1
 numpy==2.2.3
 opencv-python==4.11.0.86
 
