@@ -17,13 +17,16 @@ hyperparameters:
     learning_rate: 0.01
     momentum: 0.9
   scheduler:
-    name: step_lr
+    name: reduce_lr_on_plateau
     other:
+      # factor: 0.1
+      # patience: 5
+      mode: min
       factor: 0.1
       patience: 5
       min_lr: 0.000001
   model:
-    name: densenet121
+    name: mobilenetv2
     other:
   other:
     loss: cross_entropy
@@ -34,7 +37,7 @@ hyperparameters:
     train_type: cross_validation
 
 device: mps
-node_type: bfloat16
+node_type: float32
 
 # test:
 #   model_path:
