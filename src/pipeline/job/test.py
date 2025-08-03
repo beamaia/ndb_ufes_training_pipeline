@@ -6,6 +6,7 @@ import random
 
 import mlflow
 import numpy as np
+import pandas as pd
 import torch
 import tqdm
 
@@ -19,26 +20,29 @@ class TestJob(BaseJob):
     model = None
     loss_func = None
 
+    def __init__(self, params, num_classes=None, model_path=None):
+        self.params = params
+        self.device = self.params.device 
+        self.num_classes = num_classes
+        self.node_type = getattr(torch, self.params.node_type)
+        self.model = self._prepare_model(model_path) if model_path and self.num_classes else None
+
     def _prepare_model(self, path):
         model_str = self.params.hyperparameters.model.name.value
-        model_obj =  ModelSelector(model_str, num_classes=self.num_classes).model.to(self.device)
+        model_obj = ModelSelector(model_str, num_classes=self.num_classes).model.to(self.device).to(self.node_type)
 
         if not os.path.exists(path):
             raise FileNotFoundError(f"File to path {path} not found.")
         
-        print("models state dict", model_obj_keys.state_dict())
-        model_obj_keys = [key for key, _ in model_obj_keys.state_dict().item()]
+        model_obj_keys = [key for key, _ in model_obj.state_dict().items()]
         
         check_model_dict = torch.load(path, weights_only=True)
-        check_model_keys = [key for key, _ in check_model_dict.item()]
+        check_model_keys = [key for key, _ in check_model_dict.items()]
 
-        if all([ True if key in model_obj_keys else False for key in check_model_keys]):
-            model_obj.load_state_dict(check_model_dict)
-        else:
-            print(check_model_keys)
-            print(model_obj_keys)
-
+        
         try:
+            if all([ True if key in model_obj_keys else False for key in check_model_keys]):
+                model_obj.load_state_dict(check_model_dict)
             model_obj.load_state_dict(torch.load(path, weights_only=True))
         except Exception as e:
             logger.error("Exception caught while trying to load model.")
@@ -92,8 +96,8 @@ class TestJob(BaseJob):
         test_acc = np.mean(np.array(pred_list) == np.array(labels_list))
         test_loss = running_loss / (i + 1) if self.loss_func else None
         test_balanced_acc = balanced_accuracy_score(labels_list, pred_list)
-        test_recall = recall_score(labels_list, pred_list)
-        test_precision = precision_score(labels_list, pred_list)
+        test_recall = recall_score(labels_list, pred_list, average='micro' if len(np.unique(labels_list) > 2) else None)
+        test_precision = precision_score(labels_list, pred_list, average='micro' if len(np.unique(labels_list) > 2) else None)
 
         metrics =  {
             f"{stage}_acc": test_acc
@@ -106,22 +110,23 @@ class TestJob(BaseJob):
         metrics[f"{stage}_recall"] =  test_recall
         metrics[f"{stage}_precision"] =  test_precision
 
+        true_pred_df = pd.DataFrame({
+            "y_true": labels_list,
+            "y_pred": pred_list
+        })
         # if create_artifact:
         #   artifacts = self._create_artifacts(pred, labels, images)
 
-        return metrics, artifacts
+        return metrics, true_pred_df, artifacts
     
     def run (self, test_dataloader, model=None, loss_func=None, create_artifacts=True, path=None, stage="val"):
-        self.model = model
         self.loss_func = loss_func
 
-        if not self.params.stages.train:
-            print("Not implemented yet")
-        elif stage == "test":
-            self.model = self._prepare_model(path)
+        if self.params.stages.train and model:
+            self.model = model
         
-        metrics, artifacts = self._test(test_dataloader, create_artifacts, stage)
+        metrics, true_pred_df, artifacts = self._test(test_dataloader, create_artifacts, stage)
 
         if not create_artifacts:
-            return metrics
-        return metrics, artifacts
+            return metrics, true_pred_df
+        return metrics, true_pred_df, artifacts
