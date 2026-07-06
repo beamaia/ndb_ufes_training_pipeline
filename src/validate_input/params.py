@@ -5,11 +5,9 @@ from enum import Enum
 from aenum import MultiValueEnum
 from datetime import datetime
 from pydantic import BaseModel, Field, model_validator
+from typing import Literal
 
 class ProjectEnum(str, Enum):
-    oscc_bin = "oscc_bin"
-    dys_bin = "dys_bin"
-    oscc_dys = "oscc_dys"
     multiclass = "multiclass"
 
     def __str__(self):
@@ -39,9 +37,17 @@ class ModelEnum(str, Enum):
     densenet121 = "densenet121"
     vgg16 = "vgg16"
     efficientnetb4 = "efficientnetb4"
-    coat_lite_small = "coat_lite_small"
-    pit_s_distilled_224 = "pit_s_distilled_224"
-    vit_small_patch_384 = "vit_small_patch16_384"
+    uni = "uni"
+    virchow = "virchow"
+    ctranspath = "ctranspath"
+    mocov3_vit_small = "mocov3_vit_small"
+    vit_base_patch16_224 = "vit_base_patch16_224"
+    vit_large_patch16_224 = "vit_large_patch16_224"
+    vit_base_patch32_224 = "vit_base_patch32_224"
+    deit_base_patch16_224 = "deit_base_patch16_224"
+    swin_base_patch4_window7_224 = "swin_base_patch4_window7_224"
+    efficientnet_b0 = "efficientnet_b0"
+    efficientnet_b1 = "efficientnet_b1"
 
 class Optimizer(BaseModel):
     name: OptimizerEnum = Field(OptimizerEnum.sgd, alias="name")
@@ -60,9 +66,9 @@ class Model(BaseModel):
 class OtherHyperparams(BaseModel):
     loss: LossEnum = Field(alias="loss")
     loss_weights: bool  = Field(True, alias="loss_weights")
-    folds: int = Field(5, alias="folds", min=1)
-    epochs: int = Field(200, alias="epochs", min=1)
-    batch_size: int = Field(30, alias="batch_size", min=2)
+    folds: int = Field(5, alias="folds", ge=1)
+    epochs: int = Field(200, alias="epochs", ge=1)
+    batch_size: int = Field(30, alias="batch_size", ge=2)
     train_type: TrainTypeEnum | None = Field(TrainTypeEnum.cross_validation, alias="train_type")
 
 class Hyperparameters(BaseModel):
@@ -72,9 +78,32 @@ class Hyperparameters(BaseModel):
     other: OtherHyperparams = Field(alias="other")
 
 class Dataset(BaseModel):
-    root: str = Field("data", alias="data")
-    patch: str = Field("patch_images", alias="patch_images")
-    origin: str = Field("original_images", alias="original_images")
+    root: str = Field("data", alias="root")
+    patch: str = Field("patch_images", alias="patch")
+    origin: str = Field("original_images", alias="origin")
+    fold_assignments_path: str = Field("data/fold_assignments_patch_level.csv", alias="fold_assignments_path")
+    cv_folds: list[int] = Field(default_factory=lambda: [0, 1, 2, 3, 4], alias="cv_folds")
+    test_fold: int = Field(5, alias="test_fold")
+
+    @model_validator(mode="after")
+    def validate_fold_contract(self):
+        if self.test_fold in self.cv_folds:
+            raise ValueError("dataset.test_fold must not be present in dataset.cv_folds")
+        if len(set(self.cv_folds)) != len(self.cv_folds):
+            raise ValueError("dataset.cv_folds contains duplicate folds")
+        return self
+
+class Training(BaseModel):
+    mode: Literal["finetune", "frozen_head"] = Field("finetune", alias="mode")
+
+class EarlyStopping(BaseModel):
+    enabled: bool = Field(True, alias="enabled")
+    patience: int = Field(10, alias="patience", ge=1)
+    min_delta: float = Field(0.001, alias="min_delta", ge=0)
+    mode: Literal["all", "local"] = Field("all", alias="mode")
+
+class Experiment(BaseModel):
+    models: list[ModelEnum] = Field(default_factory=list, alias="models")
 
 class Stages(BaseModel):
     train: bool = Field(True, alias="train")
@@ -87,12 +116,17 @@ class Parameters(BaseModel):
     dataset: Dataset = Field(alias="dataset")
     hyperparameters: Hyperparameters = Field(alias="hyperparameters")
     test: Test | None = Field(None, alias="origin_test")
+    training: Training = Field(default_factory=Training, alias="training")
+    early_stopping: EarlyStopping = Field(default_factory=EarlyStopping, alias="early_stopping")
+    experiment: Experiment = Field(default_factory=Experiment, alias="experiment")
     device: str = Field("mps", alias="device")
     node_type: str = Field("bfloat16", alias="node_type")
     run_name: str = Field(alias="run_name")
 
     @model_validator(mode="after")
     def run_name_not_empty(self):
+        if self.project != ProjectEnum.multiclass:
+            raise ValueError("Only the leakage-safe multiclass patch task is supported.")
         run_name = self.run_name
         model_name = self.hyperparameters.model.name.value
         optimizer_name = self.hyperparameters.optimizer.name.value
@@ -125,11 +159,15 @@ class Parameters(BaseModel):
 * Dataset path:
 patch: {patch_path}
 origin: {origin_path}
+fold assignments: {self.dataset.fold_assignments_path}
+cv folds: {self.dataset.cv_folds}
+test fold: {self.dataset.test_fold}
 {dashes}
 * Hyperparams:
 {dashes}
 ** Model:
 name: {self.hyperparameters.model.name.value}
+training mode: {self.training.mode}
 """        
         other_model = self.hyperparameters.model.other
         if other_model != None or (isinstance(other_model, dict) and other_model):
@@ -156,7 +194,11 @@ loss: {self.hyperparameters.other.loss}
 weighted_loss: {self.hyperparameters.other.loss_weights}
 folds: {self.hyperparameters.other.folds}
 epochs: {self.hyperparameters.other.epochs}
-batch_size: {self.hyperparameters.other.batch_size}"""
+batch_size: {self.hyperparameters.other.batch_size}
+early_stopping.enabled: {self.early_stopping.enabled}
+early_stopping.patience: {self.early_stopping.patience}
+early_stopping.min_delta: {self.early_stopping.min_delta}
+early_stopping.mode: {self.early_stopping.mode}"""
         
         if self.test and self.test.model_path:
             message = message + f"""

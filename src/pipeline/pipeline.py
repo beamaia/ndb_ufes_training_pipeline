@@ -1,8 +1,12 @@
 from abc import ABC
-from enum import Enum
+import json
+import pathlib as pl
+import subprocess
+import tempfile
 
 import mlflow
 import numpy as np
+from sklearn.metrics import classification_report, confusion_matrix
 
 from torch.utils.data import DataLoader
 
@@ -11,37 +15,51 @@ from .job import TestJob, TrainJob
 from src.utils import dictionary
 from src.dataset import NDBUfesDataset
 from src import logger
-import os
 
 class Pipeline(ABC):
     train_job = None
     test_job = None
 
-    train_run_ids =  []
-
     def __init__(self, params, data_organizer):
         self.params = params
         self.data_organizer = data_organizer
+        self.train_run_ids = []
+        self.best_models = []
 
     def _inner_train(self, fold_num):
         batch_size = self.params.hyperparameters.other.batch_size
 
-        (train_paths, train_labels), (val_paths, val_labels) = self.data_organizer.data_per_fold(fold=fold_num, train=True)
+        (train_paths, train_labels, train_metadata), (val_paths, val_labels, val_metadata) = self.data_organizer.data_per_fold(fold=fold_num, train=True)
 
         train_dataset = NDBUfesDataset(train_paths, train_labels, 
                                        classes_dict=self.data_organizer.train_classes_dict, 
                                        aug=self.data_organizer.aug,
-                                       transform=self.data_organizer.train_transform)
+                                       transform=self.data_organizer.train_transform,
+                                       metadata=train_metadata)
         val_dataset = NDBUfesDataset(val_paths, val_labels, 
                                      classes_dict=self.data_organizer.train_classes_dict,
                                      aug=None,
-                                     transform=self.data_organizer.test_transform)
+                                     transform=self.data_organizer.test_transform,
+                                     metadata=val_metadata)
         
         train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-        val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True)
+        val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
         metrics, best_loss_metrics = self.train_job.run(train_dataloader, val_dataloader, fold=fold_num)
         return metrics, best_loss_metrics
+
+    def _test_dataloader(self):
+        batch_size = self.params.hyperparameters.other.batch_size
+        test_paths, test_labels, test_metadata = self.data_organizer.data_per_fold(fold=self.params.dataset.test_fold, train=False)
+        test_dataset = NDBUfesDataset(
+            test_paths,
+            test_labels,
+            classes_dict=self.data_organizer.train_classes_dict,
+            aug=None,
+            transform=self.data_organizer.test_transform,
+            metadata=test_metadata,
+        )
+        return DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
 
     def train(self):
@@ -50,14 +68,13 @@ class Pipeline(ABC):
 
         if train_type == "holdout":
             with mlflow.start_run(nested=True):
-                fold_num = 0
-                self._inner_train(fold_num)
+                self._inner_train(self.params.dataset.cv_folds[0])
             
         elif train_type == "cross_validation":
-            num_folds = self.params.hyperparameters.other.folds
             val_acc_list, val_balanced_acc_list, val_recall_list, val_precision_list = [], [], [], []
+            test_acc_list, test_balanced_acc_list, test_recall_list, test_precision_list = [], [], [], []
 
-            for fold_num in range(1, num_folds + 1):
+            for fold_num in self.params.dataset.cv_folds:
                 with mlflow.start_run(nested=True, run_name=f"fold_{fold_num}"):
                     run = mlflow.active_run()
                     run_id = run.info.run_id
@@ -66,6 +83,7 @@ class Pipeline(ABC):
                     logger.info("---------------------------------")
                     logger.info(f"| Starting fold {fold_num} |")
                     mlflow.log_param("fold", fold_num)
+                    self._log_split_manifest(fold_num)
                     _, best_val_metrics = self._inner_train(fold_num)
 
                     val_acc_list.append(best_val_metrics["val_acc"])
@@ -85,9 +103,20 @@ class Pipeline(ABC):
                     
                     mlflow.log_artifact(best_model, "model")
                     mlflow.log_param("model_path", best_model)
+                    self.best_models.append({"fold": fold_num, "path": best_model, "run_id": run_id})
+
+                    test_metrics, test_predictions = self._evaluate_model_on_test(best_model)
+                    prefixed_test_metrics = {f"heldout_{key}": item for key, item in test_metrics.items()}
+                    mlflow.log_metrics(prefixed_test_metrics)
+                    self._log_prediction_artifacts(test_predictions, artifact_dir="heldout_predictions")
+
+                    test_acc_list.append(test_metrics["test_acc"])
+                    test_balanced_acc_list.append(test_metrics["test_balanced_acc"])
+                    test_recall_list.append(test_metrics["test_recall"])
+                    test_precision_list.append(test_metrics["test_precision"])
 
                     logger.info(f"| Finished training fold {fold_num}|")
-                    logger.info(f"Best model metrics | Accuracy: {best_val_metrics["val_acc"] * 100: 0.3f}% | Balanced accuracy: {best_val_metrics["val_balanced_acc"] * 100: 0.3f}% | Recall: {best_val_metrics["val_recall"] * 100: 0.3f}% | Precision {best_val_metrics["val_precision"] * 100: 0.3f}%")
+                    logger.info(f"Best model metrics | Accuracy: {best_val_metrics['val_acc'] * 100: 0.3f}% | Balanced accuracy: {best_val_metrics['val_balanced_acc'] * 100: 0.3f}% | Recall: {best_val_metrics['val_recall'] * 100: 0.3f}% | Precision {best_val_metrics['val_precision'] * 100: 0.3f}%")
                     logger.info("---------------------------------\n")
                     
                 metrics = {f"fold_{key}": item for key, item in best_val_metrics.items()}
@@ -103,65 +132,26 @@ class Pipeline(ABC):
                 "std_val_balanced_acc": np.std(val_balanced_acc_list), 
                 "std_val_recall": np.std(val_recall_list), 
                 "std_val_precision": np.std(val_precision_list), 
+                "avg_heldout_test_acc": np.mean(test_acc_list),
+                "avg_heldout_test_balanced_acc": np.mean(test_balanced_acc_list),
+                "avg_heldout_test_recall": np.mean(test_recall_list),
+                "avg_heldout_test_precision": np.mean(test_precision_list),
+                "std_heldout_test_acc": np.std(test_acc_list),
+                "std_heldout_test_balanced_acc": np.std(test_balanced_acc_list),
+                "std_heldout_test_recall": np.std(test_recall_list),
+                "std_heldout_test_precision": np.std(test_precision_list),
             }
             mlflow.log_metrics(avg_std_metrics)
-            logger.info(f"Average metrics during training | Accuracy: {avg_std_metrics["avg_val_acc"] * 100: 0.3f}% \u00B12 {avg_std_metrics["std_val_acc"] * 100: 0.3f}")
-            logger.info(f"Average metrics during training | Balanced Accuracy: {avg_std_metrics["avg_val_balanced_acc"] * 100: 0.3f}% \u00B12 {avg_std_metrics["std_val_balanced_acc"] * 100: 0.3f}")
-            logger.info(f"Average metrics during training | Recall: {avg_std_metrics["avg_val_recall"] * 100: 0.3f}% \u00B12 {avg_std_metrics["std_val_recall"] * 100: 0.3f}")
-            logger.info(f"Average metrics during training | Precision: {avg_std_metrics["avg_val_precision"] * 100: 0.3f}% \u00B12 {avg_std_metrics["std_val_precision"] * 100: 0.3f}")
+            logger.info(f"Average validation accuracy: {avg_std_metrics['avg_val_acc'] * 100: 0.3f}% +/- {avg_std_metrics['std_val_acc'] * 100: 0.3f}")
+            logger.info(f"Average held-out test accuracy: {avg_std_metrics['avg_heldout_test_acc'] * 100: 0.3f}% +/- {avg_std_metrics['std_heldout_test_acc'] * 100: 0.3f}")
 
         else:
             raise ValueError(f"String value {train_type} invalid for chosing training type of job.")   
         
             
     def test(self):
-        if self.params.stages.train:
-            batch_size = self.params.hyperparameters.other.batch_size
-            (test_paths, test_labels) = self.data_organizer.data_per_fold(fold=0, train=False)
-
-            for run_id in self.train_run_ids:
-                try:
-                    run_mf = mlflow.search_runs(filter_string=f"attributes.run_id = '{run_id}'", search_all_experiments=True)
-                    path_to_artifact = run_mf["artifact_uri"][0] + "/model"
-                    best_model_path = mlflow.artifacts.list_artifacts((path_to_artifact))[0]
-                    best_model_path = f"{run_mf["artifact_uri"][0]}/{best_model_path.path}"
-                    logger.info(f"Found run_id = {run_id}")
-                except Exception as e:
-                    logger.error(f"Run id = {run_id} was not found.")
-                    logger.error(f"Error found: {e}")
-                    continue
-                
-                try:
-                    logger.info(f"Downloading model {best_model_path}")
-                    best_model_local_path = mlflow.artifacts.download_artifacts(best_model_path, dst_path="best_model")
-                except Exception as e:
-                    logger.error(f"Unnabled to download model.")
-                    continue
-
-                test_job = TestJob(self.params, 
-                                   self.data_organizer.train_num_classes,
-                                   best_model_local_path)
-
-                test_paths, test_labels = self.data_organizer.data_per_fold(fold=0, train=False)
-                test_dataset = NDBUfesDataset(test_paths, test_labels, 
-                                     classes_dict=self.data_organizer.train_classes_dict,
-                                     aug=None,
-                                     transform=self.data_organizer.test_transform)
-                test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
-
-                metrics, true_pred_df = test_job.run(test_dataloader, create_artifacts=False)
-                metrics = {f"test_{key}": item for key, item in metrics.items()}
-
-                mlflow.log_metrics(metrics, run_id=run_id)
-                
-                true_pred_df.columns = [f"test_{name}" for name in true_pred_df.columns]
-                temp_csv_path = f"true_pred_table_{run_id}.csv"
-                true_pred_df.to_csv(temp_csv_path, index=False)
-                mlflow.log_artifact(temp_csv_path, artifact_path="true_pred_table", run_id=run_id)
-
-                if os.path.exists(best_model_local_path):
-                    os.remove(best_model_local_path)
-                    os.remove(temp_csv_path)
+        if not self.best_models:
+            logger.info("No trained CV checkpoints found in this process; held-out testing is performed during training.")
 
 
     def origin_test(self):
@@ -173,4 +163,64 @@ class Pipeline(ABC):
         params_dict_flatten = dictionary.flatten(params_dict)
 
         mlflow.log_params(params_dict_flatten)
+        self._log_repo_metadata()
+        self._log_dataset_provenance()
+
+    def _evaluate_model_on_test(self, model_path):
+        test_job = TestJob(self.params, self.data_organizer.train_num_classes, model_path)
+        metrics, predictions = test_job.run(
+            self._test_dataloader(),
+            create_artifacts=False,
+            stage="test",
+        )
+        return metrics, predictions
+
+    def _log_split_manifest(self, fold_num):
+        manifest = self.data_organizer.split_manifest(fold_num)
+        self._log_json_artifact(manifest, f"split_manifest_fold_{fold_num}.json", "split_manifests")
+
+    def _log_dataset_provenance(self):
+        provenance = self.data_organizer.provenance()
+        for key, value in provenance.items():
+            if isinstance(value, (str, int, float)):
+                mlflow.log_param(f"dataset_{key}", value)
+        self._log_json_artifact(provenance, "dataset_provenance.json", "provenance")
+
+    def _log_repo_metadata(self):
+        metadata = {
+            "git_commit": self._run_text(["git", "rev-parse", "HEAD"]),
+            "git_dirty": bool(self._run_text(["git", "status", "--short"])),
+            "dvc_status": self._run_text(["dvc", "status"]),
+        }
+        for key, value in metadata.items():
+            if isinstance(value, str) and len(value) < 500:
+                mlflow.log_param(key, value)
+        self._log_json_artifact(metadata, "repo_metadata.json", "provenance")
+
+    def _run_text(self, cmd):
+        try:
+            return subprocess.check_output(cmd, text=True, stderr=subprocess.STDOUT).strip()
+        except Exception as exc:
+            return f"unavailable: {exc}"
+
+    def _log_prediction_artifacts(self, predictions, artifact_dir):
+        self._log_dataframe_artifact(predictions, "predictions.csv", artifact_dir)
+
+        labels = sorted(self.data_organizer.train_classes_dict.values())
+        report = classification_report(predictions["y_true"], predictions["y_pred"], labels=labels, output_dict=True, zero_division=0)
+        matrix = confusion_matrix(predictions["y_true"], predictions["y_pred"], labels=labels)
+        self._log_json_artifact(report, "classification_report.json", artifact_dir)
+        self._log_json_artifact({"labels": labels, "matrix": matrix.tolist()}, "confusion_matrix.json", artifact_dir)
+
+    def _log_dataframe_artifact(self, df, filename, artifact_dir):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = pl.Path(temp_dir) / filename
+            df.to_csv(path, index=False)
+            mlflow.log_artifact(str(path), artifact_path=artifact_dir)
+
+    def _log_json_artifact(self, payload, filename, artifact_dir):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = pl.Path(temp_dir) / filename
+            path.write_text(json.dumps(payload, indent=2, default=str))
+            mlflow.log_artifact(str(path), artifact_path=artifact_dir)
         

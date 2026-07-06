@@ -1,4 +1,5 @@
 [core]
-    remote = data
-['remote "data"']
-    url = s3://tcc-ndb-ufes/data/
+    remote = dvc-ndb-ufes
+    autostage = true
+['remote "dvc-ndb-ufes"']
+    url = s3://dvc-ndb-ufes/data/

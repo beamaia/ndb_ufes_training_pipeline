@@ -1,0 +1,41 @@
+[project]
+name = "ndb-ufes-training-pipeline"
+version = "0.1.0"
+description = "Leakage-safe multiclass patch training for NDB-UFES."
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "aenum==3.1.15",
+    "boto3",
+    "captum",
+    "coloredlogs==15.0.1",
+    "dvc-s3==3.2.0",
+    "dvc[s3]==3.59.1",
+    "imgaug",
+    "mlflow==2.20.2",
+    "numpy==2.2.3",
+    "opencv-python==4.11.0.86",
+    "pandas==2.3.1",
+    "pathspec==0.12.1",
+    "pydantic==2.11.7",
+    "python-dotenv",
+    "pyyaml==6.0.2",
+    "scikit-learn",
+    "timm",
+    "torch==2.6.0",
+    "torchvision==0.21.0",
+    "tqdm",
+    "transformers",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

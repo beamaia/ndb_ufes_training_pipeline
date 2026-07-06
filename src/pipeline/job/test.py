@@ -1,14 +1,9 @@
-from abc import ABC
 import os
-import pathlib as pl
-from datetime import datetime
 import random
 
-import mlflow
 import numpy as np
 import pandas as pd
 import torch
-import tqdm
 
 from sklearn.metrics import balanced_accuracy_score, recall_score, precision_score
 
@@ -29,7 +24,11 @@ class TestJob(BaseJob):
 
     def _prepare_model(self, path):
         model_str = self.params.hyperparameters.model.name.value
-        model_obj = ModelSelector(model_str, num_classes=self.num_classes).model.to(self.device).to(self.node_type)
+        model_obj = ModelSelector(
+            model_str,
+            num_classes=self.num_classes,
+            training_mode=self.params.training.mode,
+        ).model.to(self.device).to(self.node_type)
 
         if not os.path.exists(path):
             raise FileNotFoundError(f"File to path {path} not found.")
@@ -75,7 +74,8 @@ class TestJob(BaseJob):
 
     def _test(self, test_dataloader, create_artifacts=True, stage="val"):
         artifacts = None
-        if self.params.hyperparameters.model.name.lower() == "vgg16":
+        model_name = self.params.hyperparameters.model.name.value
+        if model_name == "vgg16":
             device = "cpu"
             self.model = self.model.cpu()
         else:
@@ -85,7 +85,7 @@ class TestJob(BaseJob):
 
         with torch.no_grad():
             running_loss = 0
-            pred_list, labels_list = [], []
+            pred_list, labels_list, probability_list = [], [], []
 
             for i, (images, labels) in enumerate(test_dataloader):
                 images, labels = images.to(device), labels.to(device)
@@ -96,8 +96,10 @@ class TestJob(BaseJob):
                     running_loss += loss.item()
 
                 _, pred = torch.max(outputs, axis=1)
+                probabilities = torch.softmax(outputs, dim=1)
                 pred_list.extend(pred.cpu().numpy())
                 labels_list.extend(labels.cpu().numpy())
+                probability_list.extend(probabilities.cpu().numpy())
 
         test_acc = np.mean(np.array(pred_list) == np.array(labels_list))
         test_loss = running_loss / (i + 1) if self.loss_func else None
@@ -116,16 +118,34 @@ class TestJob(BaseJob):
         metrics[f"{stage}_recall"] =  test_recall
         metrics[f"{stage}_precision"] =  test_precision
 
-        true_pred_df = pd.DataFrame({
-            "y_true": labels_list,
-            "y_pred": pred_list
-        })
+        true_pred_df = self._prediction_table(
+            test_dataloader.dataset,
+            labels_list,
+            pred_list,
+            probability_list,
+            stage,
+        )
         # if create_artifact:
         #   artifacts = self._create_artifacts(pred, labels, images)
 
         self.model.to(self.device)
 
         return metrics, true_pred_df, artifacts
+
+    def _prediction_table(self, dataset, labels_list, pred_list, probability_list, stage):
+        metadata = getattr(dataset, "metadata", [])
+        true_pred_df = pd.DataFrame(metadata) if len(metadata) == len(labels_list) else pd.DataFrame()
+        true_pred_df = true_pred_df.assign(**{
+            "y_true": labels_list,
+            "y_pred": pred_list,
+            "stage": stage,
+            "model": self.params.hyperparameters.model.name.value,
+        })
+        class_names = [name for name, _ in sorted(dataset.classes.items(), key=lambda item: item[1])]
+        for class_index, class_name in enumerate(class_names):
+            safe_name = class_name.lower().replace(" ", "_").replace("-", "_")
+            true_pred_df[f"prob_{safe_name}"] = [float(row[class_index]) for row in probability_list]
+        return true_pred_df
     
     def run (self, test_dataloader, model=None, loss_func=None, create_artifacts=True, path=None, stage="val"):
         self.loss_func = loss_func

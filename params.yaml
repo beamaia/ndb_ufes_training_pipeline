@@ -1,4 +1,4 @@
-project: oscc_bin # expected options [oscc_bin, dys_bin, oscc_dys, multiclass]
+project: multiclass
 run_name: ""
 
 stages:
@@ -8,8 +8,39 @@ stages:
 
 dataset:
   root: data
-  patch: patch_images
-  origin: original_images
+  patch: ndb_ufes/patch_level/images
+  origin: ndb_ufes/origin_level/images
+  fold_assignments_path: data/ndb_ufes/patch_level/csvs/fold_assignments_patch_level_with_images.csv
+  cv_folds: [0, 1, 2, 3, 4]
+  test_fold: 5
+
+training:
+  mode: finetune # expected options [finetune, frozen_head]
+
+early_stopping:
+  enabled: true
+  patience: 10
+  min_delta: 0.001
+  mode: all
+
+experiment:
+  models:
+    - resnet50
+    - mobilenetv2
+    - densenet121
+    - vgg16
+    - efficientnetb4
+    - uni
+    - virchow
+    - ctranspath
+    - mocov3_vit_small
+    - vit_base_patch16_224
+    - vit_large_patch16_224
+    - vit_base_patch32_224
+    - deit_base_patch16_224
+    - swin_base_patch4_window7_224
+    - efficientnet_b0
+    - efficientnet_b1
 
 hyperparameters:
   optimizer:
@@ -26,7 +57,7 @@ hyperparameters:
       patience: 5
       min_lr: 0.000001
   model:
-    name: mobilenetv2
+    name: resnet50
     other:
   other:
     loss: cross_entropy

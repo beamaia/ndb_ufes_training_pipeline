@@ -24,9 +24,9 @@ class OptimizerSchedulerSelector(ABC):
 
     def _select_optimizer(self, model_params):
         if self.optimizer_name == "sgd":
-            return SGD(model_params, self.learning_rate, self.momentum)
+            return SGD(model_params, lr=self.learning_rate, momentum=self.momentum)
         elif self.optimizer_name=="adam":
-            return Adam(model_params, self.learning_rate)
+            return Adam(model_params, lr=self.learning_rate)
         else:
             raise ValueError(f"String value '{self.optimizer_name}' invalid for chosing optimizer.")
         

@@ -13,6 +13,6 @@ class LossSelector(ABC):
     def _select_loss(self):
 
         if self.loss_name == "cross_entropy":
-            return CrossEntropyLoss(self.weights) if self.weights else CrossEntropyLoss()
+            return CrossEntropyLoss(weight=self.weights) if self.use_weight and self.weights is not None else CrossEntropyLoss()
         else:
             raise ValueError(f"String value {self.loss_name} invalid for choosing loss function.")
