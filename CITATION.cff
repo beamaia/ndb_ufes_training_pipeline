@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "If you use this training pipeline, please cite the software."
+title: "NDB-UFES Training Pipeline"
+type: software
+version: 1.0.0
+authors:
+  - family-names: Maia
+    given-names: Beatriz Matias Santana
+repository-code: "https://github.com/beamaia/ndb_ufes_training_pipeline"
+license: GPL-3.0-only

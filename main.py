@@ -1,9 +1,19 @@
 import os
+from pathlib import Path
+
 import yaml
 import mlflow
-from dotenv import load_dotenv 
+from dotenv import load_dotenv
+
+TRAINING_REPO = Path(__file__).resolve().parent
 load_dotenv()
-load_dotenv(os.getenv("MLFLOW_ENV_FILE", "/Volumes/ssd/thesis_organization/ndb_ufes_mlflow/.env"), override=False)
+load_dotenv(
+    os.getenv(
+        "MLFLOW_ENV_FILE",
+        str(TRAINING_REPO.parent / "ndb_ufes_mlflow" / ".env"),
+    ),
+    override=False,
+)
 
 from src.dataset import LeakageSafeNDBUfesOrganizer
 from src.pipeline import Pipeline

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${SCRIPT_DIR}"
+
 usage() {
   cat <<'EOF'
 Usage: ./train.sh [--pull|--no-pull] [--check-env] [--check-data]
@@ -51,10 +54,11 @@ done
 export PYTORCH_ENABLE_MPS_FALLBACK="${PYTORCH_ENABLE_MPS_FALLBACK:-1}"
 export UV_CACHE_DIR="${UV_CACHE_DIR:-.uv-cache}"
 export DVC_SITE_CACHE_DIR="${DVC_SITE_CACHE_DIR:-.dvc/tmp/site_cache}"
-MLFLOW_ENV_FILE="${MLFLOW_ENV_FILE:-/Volumes/ssd/thesis_organization/ndb_ufes_mlflow/.env}"
+MLFLOW_ENV_FILE="${MLFLOW_ENV_FILE:-${SCRIPT_DIR}/../ndb_ufes_mlflow/.env}"
 
 if [[ -f "${MLFLOW_ENV_FILE}" ]]; then
   set -a
+  # shellcheck disable=SC1090
   source "${MLFLOW_ENV_FILE}"
   set +a
 fi

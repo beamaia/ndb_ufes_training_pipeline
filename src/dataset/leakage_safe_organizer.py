@@ -2,8 +2,20 @@ import hashlib
 import pathlib as pl
 
 import pandas as pd
+import numpy as np
 import torch
 from torchvision import transforms
+
+# imgaug still reads the NumPy 1.x ``sctypes`` compatibility table.
+if not hasattr(np, "sctypes"):
+    np.sctypes = {
+        "int": [np.int8, np.int16, np.int32, np.int64],
+        "uint": [np.uint8, np.uint16, np.uint32, np.uint64],
+        "float": [np.float16, np.float32, np.float64],
+        "complex": [np.complex64, np.complex128],
+        "others": [bool, object, str, bytes],
+    }
+
 from imgaug import augmenters as iaa
 
 from src import logger
@@ -25,14 +37,17 @@ MODEL_PREPROCESSING = {
     "vit_large_patch16_224": {"size": 224, "mean": [0.5, 0.5, 0.5], "std": [0.5, 0.5, 0.5]},
     "vit_base_patch32_224": {
         "size": 224,
-        "mean": [0.48145466, 0.4578275, 0.40821073],
-        "std": [0.26862954, 0.26130258, 0.27577711],
+        "mean": [0.5, 0.5, 0.5],
+        "std": [0.5, 0.5, 0.5],
     },
-    "deit_base_patch16_224": {"size": 224, "mean": [0.5, 0.5, 0.5], "std": [0.5, 0.5, 0.5]},
+    "deit_base_patch16_224": {"size": 224, "mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225]},
     "swin_base_patch4_window7_224": {"size": 224, "mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225]},
     "efficientnet_b0": {"size": 224, "mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225]},
     "efficientnet_b1": {"size": 240, "mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225]},
     "efficientnetb4": {"size": 380, "mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225]},
+    "coat_lite_small": {"size": 224, "mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225]},
+    "pit_s_distilled_224": {"size": 224, "mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225]},
+    "vit_small_patch16_384": {"size": 384, "mean": [0.5, 0.5, 0.5], "std": [0.5, 0.5, 0.5]},
 }
 
 DEFAULT_PREPROCESSING = {"size": 224, "mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225]}
@@ -46,6 +61,9 @@ class LeakageSafeNDBUfesOrganizer:
         self.fold_assignments_path = pl.Path(params.dataset.fold_assignments_path)
         self.cv_folds = list(params.dataset.cv_folds)
         self.test_fold = params.dataset.test_fold
+        self.group_column = params.dataset.group_column
+        self.allow_origin_overlap = params.dataset.allow_origin_overlap
+        self.allow_group_overlap = params.dataset.allow_group_overlap
         self.train_classes_dict = MULTICLASS_LABELS
         self.train_num_classes = len(self.train_classes_dict)
         self.node_type = getattr(torch, params.node_type)
@@ -81,19 +99,60 @@ class LeakageSafeNDBUfesOrganizer:
         return table.copy()
 
     def _validate_table(self):
+        required_values = ["origin_id", "patch", "diagnosis", "fold"]
+        missing_values = {
+            column: int(self.table[column].isna().sum())
+            for column in required_values
+            if self.table[column].isna().any()
+        }
+        if missing_values:
+            raise ValueError(f"Required fold-assignment fields contain missing values: {missing_values}")
+
+        duplicate_patches = self.table[self.table["patch"].duplicated(keep=False)]
+        if not duplicate_patches.empty:
+            raise ValueError(
+                "Patch identifiers must be unique in a fold-assignment CSV; "
+                f"duplicates include {duplicate_patches['patch'].head(10).tolist()}"
+            )
+
         unknown_labels = set(self.table["diagnosis"].dropna()) - set(MULTICLASS_LABELS)
         if unknown_labels:
             raise ValueError(f"Unsupported diagnosis labels: {sorted(unknown_labels)}")
 
         expected_folds = set(self.cv_folds + [self.test_fold])
-        actual_folds = set(self.table["fold"].dropna().astype(int))
-        if not expected_folds.issubset(actual_folds):
+        try:
+            fold_values = pd.to_numeric(self.table["fold"], errors="raise")
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Fold assignments must contain integer values.") from exc
+        if not np.all(fold_values == fold_values.astype(int)):
+            raise ValueError("Fold assignments must contain integer values.")
+        self.table["fold"] = fold_values.astype(int)
+        actual_folds = set(self.table["fold"])
+        if actual_folds != expected_folds:
             raise ValueError(f"Expected folds {sorted(expected_folds)}, found {sorted(actual_folds)}")
 
         origin_fold_counts = self.table.groupby("origin_id")["fold"].nunique()
         leaking_origins = origin_fold_counts[origin_fold_counts > 1]
-        if not leaking_origins.empty:
+        if not leaking_origins.empty and not self.allow_origin_overlap:
             raise ValueError(f"Origins assigned to multiple folds: {leaking_origins.index.tolist()[:10]}")
+
+        if self.group_column in self.table.columns:
+            group_table = self.table.dropna(subset=[self.group_column])
+            group_fold_counts = group_table.groupby(self.group_column)["fold"].nunique()
+            leaking_groups = group_fold_counts[group_fold_counts > 1]
+            if not leaking_groups.empty and not self.allow_group_overlap:
+                raise ValueError(
+                    f"Groups in '{self.group_column}' assigned to multiple folds: "
+                    f"{leaking_groups.index.tolist()[:10]}"
+                )
+
+        class_counts = self.table.groupby("fold")["diagnosis"].nunique()
+        incomplete_folds = class_counts[class_counts < self.train_num_classes]
+        if not incomplete_folds.empty:
+            raise ValueError(
+                "Every fold must contain all classes for weighted cross-entropy; "
+                f"incomplete folds: {incomplete_folds.to_dict()}"
+            )
 
     def _configure_aug(self, size):
         return iaa.Sequential([
@@ -133,7 +192,7 @@ class LeakageSafeNDBUfesOrganizer:
 
     def _image_path_to_path(self, path):
         path = pl.Path(str(path))
-        return path if path.is_absolute() else pl.Path(path)
+        return path if path.is_absolute() else self.root_path / path
 
     def _row_to_patch_path(self, row):
         if "image_path" in row and pd.notna(row["image_path"]):

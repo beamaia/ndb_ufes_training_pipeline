@@ -48,6 +48,9 @@ class ModelEnum(str, Enum):
     swin_base_patch4_window7_224 = "swin_base_patch4_window7_224"
     efficientnet_b0 = "efficientnet_b0"
     efficientnet_b1 = "efficientnet_b1"
+    coat_lite_small = "coat_lite_small"
+    pit_s_distilled_224 = "pit_s_distilled_224"
+    vit_small_patch16_384 = "vit_small_patch16_384"
 
 class Optimizer(BaseModel):
     name: OptimizerEnum = Field(OptimizerEnum.sgd, alias="name")
@@ -84,6 +87,9 @@ class Dataset(BaseModel):
     fold_assignments_path: str = Field("data/fold_assignments_patch_level.csv", alias="fold_assignments_path")
     cv_folds: list[int] = Field(default_factory=lambda: [0, 1, 2, 3, 4], alias="cv_folds")
     test_fold: int = Field(5, alias="test_fold")
+    group_column: str = Field("patient_case_group", alias="group_column")
+    allow_origin_overlap: bool = Field(False, alias="allow_origin_overlap")
+    allow_group_overlap: bool = Field(False, alias="allow_group_overlap")
 
     @model_validator(mode="after")
     def validate_fold_contract(self):
@@ -121,6 +127,12 @@ class Parameters(BaseModel):
     experiment: Experiment = Field(default_factory=Experiment, alias="experiment")
     device: str = Field("mps", alias="device")
     node_type: str = Field("bfloat16", alias="node_type")
+    seed: int = Field(42, alias="seed", ge=0)
+    resume: bool = Field(False, alias="resume")
+    reuse_fold_checkpoints: dict[str, str] = Field(
+        default_factory=dict,
+        alias="reuse_fold_checkpoints",
+    )
     run_name: str = Field(alias="run_name")
 
     @model_validator(mode="after")

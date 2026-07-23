@@ -1,6 +1,7 @@
 from abc import ABC
 import os
 import pathlib as pl
+import random
 from datetime import datetime
 from tqdm import tqdm
 
@@ -8,7 +9,6 @@ import mlflow
 import numpy as np
 import torch
 from sklearn.utils.class_weight import compute_class_weight
-from sklearn.metrics import balanced_accuracy_score, recall_score, precision_score
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 from .job import BaseJob, JobType
@@ -19,6 +19,7 @@ from src.models.model_selector import ModelSelector
 from src.optimizer.optimizer_scheduler_selector import OptimizerSchedulerSelector
 from src.loss.loss_selector import LossSelector
 from src.early_stopper import EarlyStopper
+from src.pipeline.metrics import classification_metrics
 
 class TrainJob(BaseJob):
     job: JobType = JobType.train
@@ -32,8 +33,10 @@ class TrainJob(BaseJob):
         self.params = params
         self.num_classes = num_classes
         self.device = self.params.device 
-        self.checkpoint_root = pl.Path("models")
+        self.checkpoint_base = pl.Path("models")
+        self.checkpoint_root = self.checkpoint_base
         self.models_saved = set()
+        self.resume = self.params.resume
 
         self._test = TestJob(params)
         self.node_type = getattr(torch, self.params.node_type)
@@ -84,6 +87,8 @@ class TrainJob(BaseJob):
         running_loss = 0
 
         pred_list, labels_list = [], []
+        if len(train_dataloader.dataset) == 0:
+            raise ValueError("Training split is empty.")
         for i, (images, labels) in enumerate(train_dataloader):
             images, labels = images.to(self.device), labels.to(self.device)
             outputs = self.model(images)
@@ -99,26 +104,77 @@ class TrainJob(BaseJob):
             loss.backward()
             self.optimizer.step()
 
-        train_acc = np.mean(np.array(pred_list) == np.array(labels_list))
         train_loss = running_loss / (i+1)
-        train_balanced_acc = balanced_accuracy_score(labels_list, pred_list)
-        train_recall = recall_score(labels_list, pred_list, average='micro' if len(np.unique(labels_list) > 2) else None)
-        train_precision = precision_score(labels_list, pred_list, average='micro' if len(np.unique(labels_list) > 2) else None)
-
-        return dict(
-            train_acc=train_acc,
-            train_loss=train_loss,
-            train_balanced_acc=train_balanced_acc,
-            train_recall=train_recall,
-            train_precision=train_precision
+        metrics = classification_metrics(
+            labels_list, pred_list, self.num_classes, prefix="train"
         )
+        metrics["train_loss"] = float(train_loss)
+        return metrics
 
     def _create_artifacts_dir(self):
-        artifact_root = self.checkpoint_root  / f"project_{self.params.project}_run_{self.params.run_name}"
+        artifact_root = self.checkpoint_base / f"project_{self.params.project}_run_{self.params.run_name}"
 
         artifact_root.mkdir(parents=True, exist_ok=True)
         
         self.checkpoint_root = artifact_root
+
+    def _training_state_path(self, checkpoint_name):
+        return pl.Path(str(checkpoint_name) + "_training_state.pt")
+
+    def _save_training_state(
+        self,
+        state_path,
+        epoch_completed,
+        best_loss,
+        best_loss_metrics,
+        last_metrics,
+        early_stopper,
+        train_dataloader,
+        completed=False,
+    ):
+        generator = getattr(train_dataloader, "generator", None)
+        state = {
+            "epoch_completed": epoch_completed,
+            "completed": completed,
+            "model_state_dict": self.model.state_dict(),
+            "optimizer_state_dict": self.optimizer.state_dict(),
+            "scheduler_state_dict": self.scheduler.state_dict() if self.scheduler else None,
+            "best_loss": best_loss,
+            "best_loss_metrics": best_loss_metrics,
+            "last_metrics": last_metrics,
+            "early_stopper": None if early_stopper is None else {
+                "counter": early_stopper.counter,
+                "min_validation_loss": early_stopper.min_validation_loss,
+            },
+            "torch_rng_state": torch.get_rng_state(),
+            "numpy_rng_state": np.random.get_state(),
+            "python_rng_state": random.getstate(),
+            "train_generator_state": generator.get_state() if generator is not None else None,
+        }
+        temporary_path = state_path.with_suffix(state_path.suffix + ".tmp")
+        torch.save(state, temporary_path)
+        temporary_path.replace(state_path)
+
+    def _restore_training_state(self, state_path, early_stopper, train_dataloader):
+        state = torch.load(state_path, map_location="cpu", weights_only=False)
+        self.model.load_state_dict(state["model_state_dict"], strict=True)
+        self.optimizer.load_state_dict(state["optimizer_state_dict"])
+        for optimizer_state in self.optimizer.state.values():
+            for key, value in optimizer_state.items():
+                if torch.is_tensor(value):
+                    optimizer_state[key] = value.to(self.device)
+        if self.scheduler and state["scheduler_state_dict"] is not None:
+            self.scheduler.load_state_dict(state["scheduler_state_dict"])
+        if early_stopper and state["early_stopper"] is not None:
+            early_stopper.counter = state["early_stopper"]["counter"]
+            early_stopper.min_validation_loss = state["early_stopper"]["min_validation_loss"]
+        torch.set_rng_state(state["torch_rng_state"])
+        np.random.set_state(state["numpy_rng_state"])
+        random.setstate(state["python_rng_state"])
+        generator = getattr(train_dataloader, "generator", None)
+        if generator is not None and state["train_generator_state"] is not None:
+            generator.set_state(state["train_generator_state"])
+        return state
 
     def _train(self, train_dataloader, val_dataloader, fold=0):
         fold_path = self.checkpoint_root / f"fold_{fold}"
@@ -127,6 +183,8 @@ class TrainJob(BaseJob):
             f"model_{self.params.hyperparameters.model.name.value}_"
             f"optim_{self.params.hyperparameters.optimizer.name.value}"
         )
+        state_path = self._training_state_path(checkpoint_name)
+        best_model_path = pl.Path(str(checkpoint_name) + "_best.pt")
 
         logger.info(f"Start training at {datetime.now()}")
 
@@ -148,10 +206,25 @@ class TrainJob(BaseJob):
         num_epochs = self.params.hyperparameters.other.epochs
         best_loss = np.inf
         best_loss_metrics = {}
+        start_epoch = 0
+
+        if self.resume and state_path.exists():
+            state = self._restore_training_state(state_path, early_stopper, train_dataloader)
+            start_epoch = state["epoch_completed"]
+            best_loss = state["best_loss"]
+            best_loss_metrics = state["best_loss_metrics"]
+            if best_model_path.exists():
+                self.models_saved.add(str(best_model_path))
+            if state["completed"]:
+                logger.info(f"Fold {fold} is already complete; reusing its saved training state.")
+                return state["last_metrics"], best_loss_metrics
+            logger.info(f"Resuming fold {fold} from epoch {start_epoch + 1}.")
+            mlflow.log_param("resumed_from_epoch", start_epoch)
 
         checkpoint_epochs = set([int(num_epochs * per / 100) for per in np.arange(0, 100, 10)])
 
-        for epoch in tqdm(range(num_epochs)):
+        last_metrics = {}
+        for epoch in tqdm(range(start_epoch, num_epochs), initial=start_epoch, total=num_epochs):
             train_metrics = self._inner_train_loop(train_dataloader)
             val_metrics, _ = self._test.run(val_dataloader, 
                                             model=self.model, 
@@ -161,8 +234,8 @@ class TrainJob(BaseJob):
             metrics = train_metrics | val_metrics
 
             logger.info(f"Epoch: {epoch + 1} | Train accuracy: {metrics['train_acc'] * 100: 0.3f}% | Train loss: {metrics['train_loss']:0.3f} | Validation accuracy: {metrics['val_acc'] * 100: 0.3f}% | Validation loss: {metrics['val_loss']: 0.3f}")
-            logger.info(f"Epoch: {epoch + 1} | Other train metrics | Balanced accuracy: {metrics['train_balanced_acc'] * 100: 0.3f}% | Recall: {metrics['train_recall'] * 100: 0.3f}% | Precision {metrics['train_precision'] * 100: 0.3f}%")
-            logger.info(f"Epoch: {epoch + 1} | Other validation metrics | Balanced accuracy: {metrics['val_balanced_acc'] * 100: 0.3f}% | Recall: {metrics['val_recall'] * 100: 0.3f}% | Precision {metrics['val_precision'] * 100: 0.3f}%")
+            logger.info(f"Epoch: {epoch + 1} | Other train metrics | Balanced accuracy: {metrics['train_balanced_acc'] * 100: 0.3f}% | Macro F1: {metrics['train_macro_f1'] * 100: 0.3f}% | Recall: {metrics['train_recall'] * 100: 0.3f}% | Precision {metrics['train_precision'] * 100: 0.3f}%")
+            logger.info(f"Epoch: {epoch + 1} | Other validation metrics | Balanced accuracy: {metrics['val_balanced_acc'] * 100: 0.3f}% | Macro F1: {metrics['val_macro_f1'] * 100: 0.3f}% | Recall: {metrics['val_recall'] * 100: 0.3f}% | Precision {metrics['val_precision'] * 100: 0.3f}%")
             logger.info(f"Epoch: {epoch + 1} | Learning rate: {self.optimizer.param_groups[0]['lr']}")
 
             if epoch in checkpoint_epochs:
@@ -182,17 +255,40 @@ class TrainJob(BaseJob):
                 self.scheduler.step(metrics["val_loss"])
             else:
                 self.scheduler.step()
-            if early_stopper and early_stopper.early_stop(metrics["val_loss"]):
+            last_metrics = metrics
+            should_stop = early_stopper and early_stopper.early_stop(metrics["val_loss"])
+            self._save_training_state(
+                state_path,
+                epoch + 1,
+                best_loss,
+                best_loss_metrics,
+                last_metrics,
+                early_stopper,
+                train_dataloader,
+            )
+            if should_stop:
                 mlflow.log_metric("early_stopped_epoch", epoch + 1)
                 logger.info(
                     f"Early stopping triggered at epoch {epoch + 1} "
                     f"after {early_stopping.patience} stale validation-loss epochs."
                 )
                 break
+
+        completed_epoch = epoch + 1 if last_metrics else start_epoch
+        self._save_training_state(
+            state_path,
+            completed_epoch,
+            best_loss,
+            best_loss_metrics,
+            last_metrics,
+            early_stopper,
+            train_dataloader,
+            completed=True,
+        )
         
         logger.info(f"Finished training at {datetime.now()}")
         
-        return metrics, best_loss_metrics
+        return last_metrics, best_loss_metrics
 
     def run(self, train_dataloader, val_dataloader, fold=0):
         if not os.path.exists(self.checkpoint_root):

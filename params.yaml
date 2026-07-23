@@ -19,42 +19,29 @@ training:
 
 early_stopping:
   enabled: true
-  patience: 10
+  patience: 15
   min_delta: 0.001
   mode: all
 
 experiment:
   models:
-    - resnet50
     - mobilenetv2
     - densenet121
-    - vgg16
-    - efficientnetb4
-    - uni
-    - virchow
-    - ctranspath
-    - mocov3_vit_small
-    - vit_base_patch16_224
-    - vit_large_patch16_224
-    - vit_base_patch32_224
-    - deit_base_patch16_224
-    - swin_base_patch4_window7_224
-    - efficientnet_b0
-    - efficientnet_b1
+    - resnet50
 
 hyperparameters:
   optimizer:
     name: sgd
-    learning_rate: 0.01
+    learning_rate: 0.001
     momentum: 0.9
   scheduler:
     name: reduce_lr_on_plateau
     other:
       # factor: 0.1
-      # patience: 5
+      # patience: 10
       mode: min
       factor: 0.1
-      patience: 5
+      patience: 10
       min_lr: 0.000001
   model:
     name: resnet50
@@ -63,7 +50,7 @@ hyperparameters:
     loss: cross_entropy
     loss_weights: true
     folds: 5
-    epochs: 200
+    epochs: 150
     batch_size: 30
     train_type: cross_validation
 

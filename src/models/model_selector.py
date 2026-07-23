@@ -14,7 +14,7 @@ HF_MODEL_IDS = {
     "mocov3_vit_small": "1aurent/vit_small_patch16_224.transpath_mocov3",
     "vit_base_patch16_224": "google/vit-base-patch16-224",
     "vit_large_patch16_224": "google/vit-large-patch16-224",
-    "vit_base_patch32_224": "openai/clip-vit-base-patch32",
+    "vit_base_patch32_224": "google/vit-base-patch32-224",
     "deit_base_patch16_224": "facebook/deit-base-patch16-224",
     "swin_base_patch4_window7_224": "microsoft/swin-base-patch4-window7-224",
 }
@@ -22,6 +22,12 @@ HF_MODEL_IDS = {
 TORCHVISION_MODEL_IDS = {
     "efficientnet_b0": "efficientnet_b0",
     "efficientnet_b1": "efficientnet_b1",
+}
+
+TIMM_MODEL_IDS = {
+    "coat_lite_small",
+    "pit_s_distilled_224",
+    "vit_small_patch16_384",
 }
 
 
@@ -44,10 +50,11 @@ class HuggingFaceClassifier(nn.Module):
         hidden_size = self._infer_hidden_size()
         self.classifier = nn.Linear(hidden_size, num_classes)
         self.features = self.backbone
+        self.prefer_pooler = "swin" in model_id.lower()
 
     def _infer_hidden_size(self):
         config = getattr(self.backbone, "config", None)
-        for attr in ("hidden_size", "projection_dim", "embed_dim"):
+        for attr in ("hidden_size", "projection_dim", "embed_dim", "num_features"):
             value = getattr(config, attr, None)
             if value:
                 return int(value)
@@ -56,14 +63,17 @@ class HuggingFaceClassifier(nn.Module):
         raise ValueError("Could not infer Hugging Face backbone hidden size.")
 
     def _pool_outputs(self, outputs):
-        if hasattr(outputs, "pooler_output") and outputs.pooler_output is not None:
-            return outputs.pooler_output
+        if self.prefer_pooler and hasattr(outputs, "pooler_output"):
+            if outputs.pooler_output is not None:
+                return outputs.pooler_output
         if hasattr(outputs, "last_hidden_state"):
             hidden = outputs.last_hidden_state
             if hidden.ndim == 3:
                 return hidden[:, 0]
             if hidden.ndim == 4:
                 return hidden.mean(dim=(2, 3))
+        if hasattr(outputs, "pooler_output") and outputs.pooler_output is not None:
+            return outputs.pooler_output
         if isinstance(outputs, (tuple, list)):
             first = outputs[0]
             if first.ndim == 3:
@@ -119,6 +129,29 @@ class TorchvisionClassifier(nn.Module):
         return self.model(x)
 
 
+class TimmClassifier(nn.Module):
+    def __init__(self, model_id, num_classes):
+        super().__init__()
+        try:
+            import timm
+        except ImportError as exc:
+            raise ImportError("Install `timm` to train the article transformer models.") from exc
+
+        self.model = timm.create_model(
+            model_id,
+            pretrained=True,
+            num_classes=num_classes,
+        )
+        self.features = self.model
+
+    def forward(self, x):
+        return self.model(x)
+
+    @property
+    def classifier(self):
+        return self.model.get_classifier()
+
+
 class ModelSelector:
     def __init__(self, model_name, weights="default", training_mode="finetune", **kwargs):
         self.model_name = model_name
@@ -142,6 +175,8 @@ class ModelSelector:
             model = ResNet50(num_classes=num_classes)
         elif model_name in TORCHVISION_MODEL_IDS:
             model = TorchvisionClassifier(TORCHVISION_MODEL_IDS[model_name], num_classes=num_classes)
+        elif model_name in TIMM_MODEL_IDS:
+            model = TimmClassifier(model_name, num_classes=num_classes)
         elif model_name in HF_MODEL_IDS:
             model = HuggingFaceClassifier(HF_MODEL_IDS[model_name], num_classes=num_classes)
         else:
@@ -155,8 +190,10 @@ class ModelSelector:
         classifier = getattr(self.model_obj, "classifier", None)
         if classifier is None:
             raise ValueError(f"Model {self.model_name} does not expose a classifier for frozen_head mode.")
-        for parameter in classifier.parameters():
-            parameter.requires_grad = True
+        classifier_modules = classifier if isinstance(classifier, (tuple, list)) else [classifier]
+        for module in classifier_modules:
+            for parameter in module.parameters():
+                parameter.requires_grad = True
     
     @property
     def model(self):

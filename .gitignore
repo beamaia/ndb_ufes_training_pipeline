@@ -180,3 +180,9 @@ data/*
 
 # logs
 logs/*
+
+# Local experiment state and checkpoints
+mlruns/
+models/
+.cache/torch/
+*.pt
