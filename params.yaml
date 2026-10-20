@@ -1,21 +1,24 @@
 project: multiclass
 run_name: ""
 
-stages:
-  train: true
-  test: true
-  origin_test: false
-
 dataset:
-  root: data
-  patch: ndb_ufes/patch_level/images
-  origin: ndb_ufes/origin_level/images
-  fold_assignments_path: data/ndb_ufes/patch_level/csvs/fold_assignments_patch_level_with_images.csv
-  cv_folds: [0, 1, 2, 3, 4]
-  test_fold: 5
+  organizer: ../ndb_ufes_data_organizer # the data organizer repository, relative to this one
+  folds_csv: results/phase1/folds/fold_assignments.csv # the paths below start at the organizer repository
+  patch_dir: data/ndb_ufes/patch_level/images
+  patch_table: results/phase0/dataset_tables/patch_table_public.csv # gives the picture of each patch; null leaves out the per-picture and per-patient metrics
+  folds: [0, 1, 2, 3, 4, 5]
+  test_fold: 5 # kept out of the cross-validation; every fold model is tested on it
+
+run:
+  purpose: final # the MLflow experiment is ndb_ufes_<purpose>
+  suffix: "" # added to the run names
+  hourly_cost: null # price of the machine per hour in dollars; the cost of the run is logged
+  tracking_uri: null # the MLflow server; null uses MLFLOW_TRACKING_URI from .env, then http://localhost:8000/
+  last_checkpoints: 1 # each fold keeps its best checkpoint and the checkpoint of its last epoch; the older ones are deleted (0 keeps only the best)
+  checkpoints_in_mlflow: false # true also copies every checkpoint into MLflow, which doubles the disk space
 
 training:
-  mode: finetune # expected options [finetune, frozen_head]
+  mode: finetune # end to end
 
 early_stopping:
   enabled: true
@@ -25,9 +28,13 @@ early_stopping:
 
 experiment:
   models:
+    - resnet50
     - mobilenetv2
     - densenet121
-    - resnet50
+    - vgg16
+    - coat_lite_small
+    - pit_s_distilled_224
+    - vit_small_patch16_384
 
 hyperparameters:
   optimizer:
@@ -37,25 +44,18 @@ hyperparameters:
   scheduler:
     name: reduce_lr_on_plateau
     other:
-      # factor: 0.1
-      # patience: 10
       mode: min
       factor: 0.1
       patience: 10
       min_lr: 0.000001
   model:
     name: resnet50
-    other:
   other:
     loss: cross_entropy
     loss_weights: true
-    folds: 5
     epochs: 150
     batch_size: 30
-    train_type: cross_validation
 
-device: mps
+device: auto
 node_type: float32
-
-# test:
-#   model_path:
+seed: 42

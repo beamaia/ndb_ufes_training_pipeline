@@ -29,22 +29,12 @@ MULTICLASS_LABELS = {
 
 
 MODEL_PREPROCESSING = {
-    "uni": {"size": 224, "mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225]},
-    "virchow": {"size": 224, "mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225]},
-    "ctranspath": {"size": 224, "mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225]},
-    "mocov3_vit_small": {"size": 224, "mean": [0.5, 0.5, 0.5], "std": [0.5, 0.5, 0.5]},
-    "vit_base_patch16_224": {"size": 224, "mean": [0.5, 0.5, 0.5], "std": [0.5, 0.5, 0.5]},
-    "vit_large_patch16_224": {"size": 224, "mean": [0.5, 0.5, 0.5], "std": [0.5, 0.5, 0.5]},
-    "vit_base_patch32_224": {
-        "size": 224,
-        "mean": [0.5, 0.5, 0.5],
-        "std": [0.5, 0.5, 0.5],
-    },
-    "deit_base_patch16_224": {"size": 224, "mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225]},
-    "swin_base_patch4_window7_224": {"size": 224, "mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225]},
     "efficientnet_b0": {"size": 224, "mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225]},
-    "efficientnet_b1": {"size": 240, "mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225]},
+    "efficientnet_b3": {"size": 288, "mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225]},
     "efficientnetb4": {"size": 380, "mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225]},
+    "convnext_large": {"size": 224, "mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225]},
+    "swin_tiny_patch4_window7_224": {"size": 224, "mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225]},
+    "swin_base_patch4_window7_224": {"size": 224, "mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225]},
     "coat_lite_small": {"size": 224, "mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225]},
     "pit_s_distilled_224": {"size": 224, "mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225]},
     "vit_small_patch16_384": {"size": 384, "mean": [0.5, 0.5, 0.5], "std": [0.5, 0.5, 0.5]},
@@ -53,106 +43,75 @@ MODEL_PREPROCESSING = {
 DEFAULT_PREPROCESSING = {"size": 224, "mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225]}
 
 
+REQUIRED_COLUMNS = ["patch_id", "case_group", "fold", "patch_diagnosis"]
+
+
 class LeakageSafeNDBUfesOrganizer:
-    def __init__(self, params):
+    """The patches of ``fold_assignments.csv`` (made by the data organizer), split by fold.
+
+    One fold is kept as the test set. The others are the cross-validation folds: each one is the validation set in turn and
+    the rest are the training set. A case group is in exactly one fold, so no patient is on two sides.
+    """
+
+    def __init__(self, params, check: bool = True):
+        """``check=False`` skips the validation of the folds file, for data that has already been checked (see ``src/data_check.py``)."""
         self.params = params
-        self.root_path = pl.Path(params.dataset.root)
-        self.patch_path = self.root_path / params.dataset.patch
-        self.fold_assignments_path = pl.Path(params.dataset.fold_assignments_path)
-        self.cv_folds = list(params.dataset.cv_folds)
+        self.patch_path = pl.Path(params.dataset.patch_dir)
+        self.folds_csv = pl.Path(params.dataset.folds_csv)
+        self.patch_table = pl.Path(params.dataset.patch_table) if params.dataset.patch_table else None
+        self.folds = list(params.dataset.folds)
         self.test_fold = params.dataset.test_fold
-        self.group_column = params.dataset.group_column
-        self.allow_origin_overlap = params.dataset.allow_origin_overlap
-        self.allow_group_overlap = params.dataset.allow_group_overlap
+        self.cv_folds = [fold for fold in self.folds if fold != self.test_fold]
         self.train_classes_dict = MULTICLASS_LABELS
         self.train_num_classes = len(self.train_classes_dict)
         self.node_type = getattr(torch, params.node_type)
         self.model_name = params.hyperparameters.model.name.value
 
         self.table = self._load_table()
-        self._validate_table()
-        self.aug = self._configure_aug(self._preprocessing["size"])
+        if check:
+            self._validate_table()
+        self.aug = self._configure_aug(self.preprocessing["size"])
         self.train_transform = self._configure_transform(train=True)
         self.test_transform = self._configure_transform(train=False)
 
     @property
-    def _preprocessing(self):
+    def preprocessing(self):
         return MODEL_PREPROCESSING.get(self.model_name, DEFAULT_PREPROCESSING)
 
     def _load_table(self):
-        if not self.fold_assignments_path.exists():
-            raise FileNotFoundError(
-                f"Fold assignment CSV not found at {self.fold_assignments_path}. "
-                "Run `dvc pull` or update dataset.fold_assignments_path."
-            )
-        table = pd.read_csv(self.fold_assignments_path)
-        if "origin" in table.columns and "origin_id" not in table.columns:
-            table = table.rename(columns={"origin": "origin_id"})
-        if "image_name" in table.columns and "patch" not in table.columns:
-            table = table.rename(columns={"image_name": "patch"})
-        if "class" in table.columns and "diagnosis" not in table.columns:
-            table = table.rename(columns={"class": "diagnosis"})
-        required = {"origin_id", "patch", "diagnosis", "fold"}
-        missing = required - set(table.columns)
+        if not self.folds_csv.exists():
+            raise FileNotFoundError(f"Folds file not found at {self.folds_csv}. Set dataset.organizer or dataset.folds_csv in the settings file.")
+        table = pd.read_csv(self.folds_csv, dtype=str, keep_default_na=False)
+        missing = [column for column in REQUIRED_COLUMNS if column not in table.columns]
         if missing:
-            raise ValueError(f"Fold assignment CSV missing required columns: {sorted(missing)}")
-        return table.copy()
+            raise ValueError(f"The folds file is missing the columns {missing}")
+        unfolded = table["fold"] == ""
+        if unfolded.any():  # the only patches without a fold are exact duplicates of a patch that has one
+            if "dropped_duplicate_of" not in table.columns or (table.loc[unfolded, "dropped_duplicate_of"] == "").any():
+                raise ValueError("A patch has no fold and is not marked as a dropped duplicate")
+            table = table[~unfolded]
+        table["fold"] = table["fold"].astype(int)
+        if self.patch_table is not None:  # the picture of each patch and the NDB-UFES diagnosis of that picture
+            pictures = pd.read_csv(self.patch_table, dtype=str, keep_default_na=False).set_index("patch_id")[["histopath_id", "ndb_diagnosis"]]
+            table = table.join(pictures, on="patch_id")
+            if table["histopath_id"].isna().any():
+                raise ValueError(f"{int(table['histopath_id'].isna().sum())} patches of the folds file are not in {self.patch_table}")
+        return table.reset_index(drop=True)
 
     def _validate_table(self):
-        required_values = ["origin_id", "patch", "diagnosis", "fold"]
-        missing_values = {
-            column: int(self.table[column].isna().sum())
-            for column in required_values
-            if self.table[column].isna().any()
-        }
-        if missing_values:
-            raise ValueError(f"Required fold-assignment fields contain missing values: {missing_values}")
-
-        duplicate_patches = self.table[self.table["patch"].duplicated(keep=False)]
-        if not duplicate_patches.empty:
-            raise ValueError(
-                "Patch identifiers must be unique in a fold-assignment CSV; "
-                f"duplicates include {duplicate_patches['patch'].head(10).tolist()}"
-            )
-
-        unknown_labels = set(self.table["diagnosis"].dropna()) - set(MULTICLASS_LABELS)
+        if self.table["patch_id"].duplicated().any():
+            raise ValueError(f"Patch ids repeat in the folds file, for example {self.table['patch_id'][self.table['patch_id'].duplicated()].head(5).tolist()}")
+        unknown_labels = set(self.table["patch_diagnosis"]) - set(MULTICLASS_LABELS)
         if unknown_labels:
             raise ValueError(f"Unsupported diagnosis labels: {sorted(unknown_labels)}")
-
-        expected_folds = set(self.cv_folds + [self.test_fold])
-        try:
-            fold_values = pd.to_numeric(self.table["fold"], errors="raise")
-        except (TypeError, ValueError) as exc:
-            raise ValueError("Fold assignments must contain integer values.") from exc
-        if not np.all(fold_values == fold_values.astype(int)):
-            raise ValueError("Fold assignments must contain integer values.")
-        self.table["fold"] = fold_values.astype(int)
-        actual_folds = set(self.table["fold"])
-        if actual_folds != expected_folds:
-            raise ValueError(f"Expected folds {sorted(expected_folds)}, found {sorted(actual_folds)}")
-
-        origin_fold_counts = self.table.groupby("origin_id")["fold"].nunique()
-        leaking_origins = origin_fold_counts[origin_fold_counts > 1]
-        if not leaking_origins.empty and not self.allow_origin_overlap:
-            raise ValueError(f"Origins assigned to multiple folds: {leaking_origins.index.tolist()[:10]}")
-
-        if self.group_column in self.table.columns:
-            group_table = self.table.dropna(subset=[self.group_column])
-            group_fold_counts = group_table.groupby(self.group_column)["fold"].nunique()
-            leaking_groups = group_fold_counts[group_fold_counts > 1]
-            if not leaking_groups.empty and not self.allow_group_overlap:
-                raise ValueError(
-                    f"Groups in '{self.group_column}' assigned to multiple folds: "
-                    f"{leaking_groups.index.tolist()[:10]}"
-                )
-
-        class_counts = self.table.groupby("fold")["diagnosis"].nunique()
-        incomplete_folds = class_counts[class_counts < self.train_num_classes]
-        if not incomplete_folds.empty:
-            raise ValueError(
-                "Every fold must contain all classes for weighted cross-entropy; "
-                f"incomplete folds: {incomplete_folds.to_dict()}"
-            )
+        if set(self.table["fold"]) != set(self.folds):
+            raise ValueError(f"Expected the folds {sorted(self.folds)}, found {sorted(set(self.table['fold']))}")
+        in_several = self.table.groupby("case_group")["fold"].nunique()
+        if (in_several > 1).any():
+            raise ValueError(f"Case groups in more than one fold: {in_several[in_several > 1].index.tolist()[:10]}")
+        classes_per_fold = self.table.groupby("fold")["patch_diagnosis"].nunique()
+        if (classes_per_fold < self.train_num_classes).any():
+            raise ValueError(f"Every fold must hold all classes (weighted cross-entropy needs them); incomplete: {classes_per_fold[classes_per_fold < self.train_num_classes].to_dict()}")
 
     def _configure_aug(self, size):
         return iaa.Sequential([
@@ -173,7 +132,7 @@ class LeakageSafeNDBUfesOrganizer:
         ])
 
     def _configure_transform(self, train):
-        prep = self._preprocessing
+        prep = self.preprocessing
         return transforms.Compose([
             transforms.Resize((prep["size"], prep["size"])),
             transforms.ToTensor(),
@@ -181,63 +140,46 @@ class LeakageSafeNDBUfesOrganizer:
             transforms.Normalize(mean=prep["mean"], std=prep["std"]),
         ])
 
-    def _table_to_dataset_arrays(self, table):
-        prepared = table.copy().reset_index(drop=True)
-        prepared["class"] = prepared["diagnosis"].map(MULTICLASS_LABELS).astype(int)
-        prepared["patch_path"] = prepared.apply(self._row_to_patch_path, axis=1)
-        paths = prepared["patch_path"].to_numpy()
-        labels = prepared["class"].to_numpy()
-        metadata = prepared.drop(columns=["patch_path"]).to_dict("records")
-        return paths, labels, metadata
+    def _arrays(self, table):
+        """Image paths, labels (0 to 2) and the table rows as records, for a Dataset."""
+        paths = (self.patch_path / (table["patch_id"] + ".png")).to_numpy()
+        labels = table["patch_diagnosis"].map(MULTICLASS_LABELS).to_numpy()
+        return paths, labels, table.to_dict("records")
 
-    def _image_path_to_path(self, path):
-        path = pl.Path(str(path))
-        return path if path.is_absolute() else self.root_path / path
+    def split(self, validation_fold):
+        """(paths, labels, records) of the training, validation and test patches when ``validation_fold`` is the validation fold."""
+        if validation_fold not in self.cv_folds:
+            raise ValueError(f"The validation fold must be one of {self.cv_folds}; got {validation_fold}")
+        train_folds = [fold for fold in self.cv_folds if fold != validation_fold]
+        parts = [self.table[self.table["fold"].isin(folds)] for folds in (train_folds, [validation_fold], [self.test_fold])]
+        groups = [set(part["case_group"]) for part in parts]
+        if groups[0] & groups[1] or groups[0] & groups[2] or groups[1] & groups[2]:
+            raise ValueError("A case group is on two sides of the split")  # cannot happen after the check at loading; it guards the split itself
+        logger.info(f"Validation fold {validation_fold}: train {len(parts[0])} - validation {len(parts[1])} - test {len(parts[2])}")
+        return tuple(self._arrays(part) for part in parts)
 
-    def _row_to_patch_path(self, row):
-        if "image_path" in row and pd.notna(row["image_path"]):
-            path = self._image_path_to_path(row["image_path"])
-            if path.exists():
-                return path
-        return self._patch_to_path(row["patch"])
+    def missing_images(self):
+        """The patches whose image is not on disk."""
+        return [patch_id for patch_id in self.table["patch_id"] if not (self.patch_path / f"{patch_id}.png").exists()]
 
-    def _patch_to_path(self, patch):
-        patch = str(patch)
-        filename = patch if patch.endswith(".png") else f"{patch}.png"
-        return self.patch_path / filename
-
-    def data_per_fold(self, fold: int, train: bool = True):
-        if train:
-            if fold not in self.cv_folds:
-                raise ValueError(f"Validation fold must be one of {self.cv_folds}; got {fold}")
-            train_table = self.table[self.table["fold"].isin([f for f in self.cv_folds if f != fold])]
-            val_table = self.table[self.table["fold"] == fold]
-            if self.test_fold in set(train_table["fold"]) or self.test_fold in set(val_table["fold"]):
-                raise ValueError("Held-out test fold leaked into train/validation split.")
-            logger.info(f"Subset size: train {len(train_table)} - validation {len(val_table)}")
-            return self._table_to_dataset_arrays(train_table), self._table_to_dataset_arrays(val_table)
-
-        test_table = self.table[self.table["fold"] == self.test_fold]
-        logger.info(f"Held-out test subset size: {len(test_table)}")
-        return self._table_to_dataset_arrays(test_table)
-
-    def split_manifest(self, fold):
-        train_folds = [f for f in self.cv_folds if f != fold]
+    def split_manifest(self, validation_fold):
+        rows = self.table["fold"].value_counts()
+        train_folds = [fold for fold in self.cv_folds if fold != validation_fold]
         return {
             "train_folds": train_folds,
-            "validation_fold": fold,
+            "validation_fold": validation_fold,
             "test_fold": self.test_fold,
-            "train_rows": int(self.table[self.table["fold"].isin(train_folds)].shape[0]),
-            "validation_rows": int(self.table[self.table["fold"] == fold].shape[0]),
-            "test_rows": int(self.table[self.table["fold"] == self.test_fold].shape[0]),
+            "train_rows": int(sum(rows[fold] for fold in train_folds)),
+            "validation_rows": int(rows[validation_fold]),
+            "test_rows": int(rows[self.test_fold]),
         }
 
     def provenance(self):
-        digest = hashlib.sha256(self.fold_assignments_path.read_bytes()).hexdigest()
         return {
-            "fold_assignments_path": str(self.fold_assignments_path),
-            "fold_assignments_sha256": digest,
+            "folds_csv": str(self.folds_csv),
+            "folds_csv_sha256": hashlib.sha256(self.folds_csv.read_bytes()).hexdigest(),
             "row_count": int(len(self.table)),
+            "case_groups": int(self.table["case_group"].nunique()),
             "fold_counts": {str(k): int(v) for k, v in self.table["fold"].value_counts().sort_index().items()},
-            "class_counts": {k: int(v) for k, v in self.table["diagnosis"].value_counts().items()},
+            "class_counts": {k: int(v) for k, v in self.table["patch_diagnosis"].value_counts().items()},
         }

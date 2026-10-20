@@ -1,3 +1,2 @@
-from .ndb_ufes_organizer import NDBUfesOrganizer
 from .ndb_ufes_dataset import NDBUfesDataset
 from .leakage_safe_organizer import LeakageSafeNDBUfesOrganizer, MULTICLASS_LABELS

@@ -12,7 +12,7 @@ dependencies = [
     "dvc-s3==3.2.0",
     "dvc[s3]==3.59.1",
     "imgaug",
-    "mlflow==2.20.2",
+    "mlflow==3.17.1",
     "numpy==2.2.3",
     "opencv-python==4.11.0.86",
     "pandas==2.3.1",

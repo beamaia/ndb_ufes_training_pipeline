@@ -8,9 +8,11 @@ import numpy as np
 from sklearn.metrics import (
     accuracy_score,
     balanced_accuracy_score,
+    confusion_matrix,
     f1_score,
     precision_score,
     recall_score,
+    roc_auc_score,
 )
 
 
@@ -62,10 +64,32 @@ def classification_metrics(
                 zero_division=0,
             )
         ),
-        f"{prefix}_micro_precision": float(
-            precision_score(y_true, y_pred, average="micro", zero_division=0)
-        ),
-        f"{prefix}_micro_recall": float(
-            recall_score(y_true, y_pred, average="micro", zero_division=0)
-        ),
     }
+
+
+def class_key(name: str) -> str:
+    """A class name as it appears in column and metric names: ``Leukoplakia with dysplasia`` becomes ``leukoplakia_with_dysplasia``."""
+    return name.lower().replace(" ", "_").replace("-", "_")
+
+
+def confusion_metrics(labels: Iterable[int], predictions: Iterable[int], class_names: list[str], prefix: str) -> dict[str, float]:
+    """The confusion matrix as numbers: ``<prefix>_cm_<true class>_as_<predicted class>`` is how many of the true class were predicted as the other class."""
+    matrix = confusion_matrix(np.asarray(list(labels), dtype=int), np.asarray(list(predictions), dtype=int), labels=list(range(len(class_names))))
+    return {f"{prefix}_cm_{class_key(true)}_as_{class_key(predicted)}": float(matrix[i, j]) for i, true in enumerate(class_names) for j, predicted in enumerate(class_names)}
+
+
+def roc_auc_metrics(labels: Iterable[int], probabilities: np.ndarray, class_names: list[str], prefix: str) -> dict[str, float]:
+    """The area under the ROC curve of each class against the others, and their mean (macro).
+
+    A class that is absent from ``labels`` (or the only one present) has no ROC curve and is left out of the mean.
+    """
+    y_true = np.asarray(list(labels), dtype=int)
+    probabilities = np.asarray(probabilities, dtype=float)
+    metrics = {}
+    for index, name in enumerate(class_names):
+        positive = y_true == index
+        if positive.any() and not positive.all():
+            metrics[f"{prefix}_roc_auc_{class_key(name)}"] = float(roc_auc_score(positive, probabilities[:, index]))
+    if metrics:
+        metrics[f"{prefix}_roc_auc_macro"] = float(np.mean(list(metrics.values())))
+    return metrics

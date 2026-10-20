@@ -2,9 +2,11 @@ from abc import ABC
 import os
 import pathlib as pl
 import random
+import time
 from datetime import datetime
 from tqdm import tqdm
 
+import imgaug
 import mlflow
 import numpy as np
 import torch
@@ -15,6 +17,7 @@ from .job import BaseJob, JobType
 from .test import TestJob
 
 from src import logger
+from src.checkpoint import save_checkpoint
 from src.models.model_selector import ModelSelector
 from src.optimizer.optimizer_scheduler_selector import OptimizerSchedulerSelector
 from src.loss.loss_selector import LossSelector
@@ -35,7 +38,8 @@ class TrainJob(BaseJob):
         self.device = self.params.device 
         self.checkpoint_base = pl.Path("models")
         self.checkpoint_root = self.checkpoint_base
-        self.models_saved = set()
+        self.best_model_path = None
+        self.checkpoint_description = {}  # set by the pipeline for each fold: the model, classes, preprocessing and seeds
         self.resume = self.params.resume
 
         self._test = TestJob(params)
@@ -136,27 +140,30 @@ class TrainJob(BaseJob):
         state = {
             "epoch_completed": epoch_completed,
             "completed": completed,
-            "model_state_dict": self.model.state_dict(),
-            "optimizer_state_dict": self.optimizer.state_dict(),
-            "scheduler_state_dict": self.scheduler.state_dict() if self.scheduler else None,
             "best_loss": best_loss,
             "best_loss_metrics": best_loss_metrics,
             "last_metrics": last_metrics,
-            "early_stopper": None if early_stopper is None else {
-                "counter": early_stopper.counter,
-                "min_validation_loss": early_stopper.min_validation_loss,
-            },
-            "torch_rng_state": torch.get_rng_state(),
-            "numpy_rng_state": np.random.get_state(),
-            "python_rng_state": random.getstate(),
-            "train_generator_state": generator.get_state() if generator is not None else None,
         }
+        if not completed:  # a finished fold has nothing left to resume: it keeps its results, not the weights, the optimizer and the random states
+            state |= {
+                "model_state_dict": self.model.state_dict(),
+                "optimizer_state_dict": self.optimizer.state_dict(),
+                "scheduler_state_dict": self.scheduler.state_dict() if self.scheduler else None,
+                "early_stopper": None if early_stopper is None else {
+                    "counter": early_stopper.counter,
+                    "min_validation_loss": early_stopper.min_validation_loss,
+                },
+                "torch_rng_state": torch.get_rng_state(),
+                "numpy_rng_state": np.random.get_state(),
+                "python_rng_state": random.getstate(),
+                "imgaug_rng_state": imgaug.random.get_global_rng().state,
+                "train_generator_state": generator.get_state() if generator is not None else None,
+            }
         temporary_path = state_path.with_suffix(state_path.suffix + ".tmp")
         torch.save(state, temporary_path)
         temporary_path.replace(state_path)
 
-    def _restore_training_state(self, state_path, early_stopper, train_dataloader):
-        state = torch.load(state_path, map_location="cpu", weights_only=False)
+    def _restore_training_state(self, state, early_stopper, train_dataloader):
         self.model.load_state_dict(state["model_state_dict"], strict=True)
         self.optimizer.load_state_dict(state["optimizer_state_dict"])
         for optimizer_state in self.optimizer.state.values():
@@ -171,6 +178,7 @@ class TrainJob(BaseJob):
         torch.set_rng_state(state["torch_rng_state"])
         np.random.set_state(state["numpy_rng_state"])
         random.setstate(state["python_rng_state"])
+        imgaug.random.get_global_rng().state = state["imgaug_rng_state"]
         generator = getattr(train_dataloader, "generator", None)
         if generator is not None and state["train_generator_state"] is not None:
             generator.set_state(state["train_generator_state"])
@@ -185,6 +193,7 @@ class TrainJob(BaseJob):
         )
         state_path = self._training_state_path(checkpoint_name)
         best_model_path = pl.Path(str(checkpoint_name) + "_best.pt")
+        self.best_model_path = str(best_model_path)
 
         logger.info(f"Start training at {datetime.now()}")
 
@@ -209,27 +218,25 @@ class TrainJob(BaseJob):
         start_epoch = 0
 
         if self.resume and state_path.exists():
-            state = self._restore_training_state(state_path, early_stopper, train_dataloader)
+            state = torch.load(state_path, map_location="cpu", weights_only=False)
             start_epoch = state["epoch_completed"]
             best_loss = state["best_loss"]
             best_loss_metrics = state["best_loss_metrics"]
-            if best_model_path.exists():
-                self.models_saved.add(str(best_model_path))
             if state["completed"]:
-                logger.info(f"Fold {fold} is already complete; reusing its saved training state.")
+                logger.info(f"Fold {fold} is already complete; reusing its saved results.")
                 return state["last_metrics"], best_loss_metrics
+            self._restore_training_state(state, early_stopper, train_dataloader)
             logger.info(f"Resuming fold {fold} from epoch {start_epoch + 1}.")
             mlflow.log_param("resumed_from_epoch", start_epoch)
 
-        checkpoint_epochs = set([int(num_epochs * per / 100) for per in np.arange(0, 100, 10)])
-
         last_metrics = {}
+        train_started = time.perf_counter()
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
         for epoch in tqdm(range(start_epoch, num_epochs), initial=start_epoch, total=num_epochs):
+            epoch_started = time.perf_counter()
             train_metrics = self._inner_train_loop(train_dataloader)
-            val_metrics, _ = self._test.run(val_dataloader, 
-                                            model=self.model, 
-                                            loss_func=self.loss_func, 
-                                            create_artifacts=False)
+            val_metrics, _ = self._test.run(val_dataloader, model=self.model, loss_func=self.loss_func)
             
             metrics = train_metrics | val_metrics
 
@@ -238,18 +245,19 @@ class TrainJob(BaseJob):
             logger.info(f"Epoch: {epoch + 1} | Other validation metrics | Balanced accuracy: {metrics['val_balanced_acc'] * 100: 0.3f}% | Macro F1: {metrics['val_macro_f1'] * 100: 0.3f}% | Recall: {metrics['val_recall'] * 100: 0.3f}% | Precision {metrics['val_precision'] * 100: 0.3f}%")
             logger.info(f"Epoch: {epoch + 1} | Learning rate: {self.optimizer.param_groups[0]['lr']}")
 
-            if epoch in checkpoint_epochs:
-                torch.save(self.model.state_dict(), str(checkpoint_name) + "_checkpoint.pt")
-                self.models_saved.add(str(checkpoint_name) + "_checkpoint.pt")
+            keep_last = self.params.run.last_checkpoints
+            if keep_last:  # the weights of the last epochs, as self-describing checkpoints; the older ones are deleted
+                save_checkpoint(pl.Path(f"{checkpoint_name}_epoch_{epoch + 1:03d}.pt"), self.model, {**self.checkpoint_description, "epoch": epoch + 1, "val_loss": float(metrics["val_loss"])})
+                for old in sorted(fold_path.glob(f"{checkpoint_name.name}_epoch_*.pt"))[:-keep_last]:
+                    old.unlink()
 
             if best_loss > metrics["val_loss"]:
                 best_loss = metrics["val_loss"]
-                torch.save(self.model.state_dict(), str(checkpoint_name) + "_best.pt")
-                self.models_saved.add(str(checkpoint_name) + "_best.pt")
-                best_loss_metrics = {key:item for key, item in metrics.items() if "val" in key}
-                
+                save_checkpoint(best_model_path, self.model, {**self.checkpoint_description, "epoch": epoch + 1, "val_loss": float(best_loss)})
+                best_loss_metrics = {key:item for key, item in metrics.items() if "val" in key} | {"val_epoch_of_best_loss": epoch + 1}
+
             mlflow.log_metrics(metrics, step=epoch)
-            mlflow.log_metric("learning_rate", self.optimizer.param_groups[0]['lr'], step=epoch)
+            mlflow.log_metrics({"learning_rate": self.optimizer.param_groups[0]['lr'], "epoch_seconds": time.perf_counter() - epoch_started}, step=epoch)
 
             if isinstance(self.scheduler, ReduceLROnPlateau):
                 self.scheduler.step(metrics["val_loss"])
@@ -286,8 +294,14 @@ class TrainJob(BaseJob):
             completed=True,
         )
         
+        if not best_model_path.exists():
+            raise ValueError(f"No best checkpoint was saved for fold {fold}")
+        cost = {"epochs_run": float(epoch + 1 - start_epoch), "train_seconds": time.perf_counter() - train_started}
+        if torch.cuda.is_available():
+            cost["peak_gpu_memory_mb"] = torch.cuda.max_memory_allocated() / 2**20
+        mlflow.log_metrics(cost)
         logger.info(f"Finished training at {datetime.now()}")
-        
+
         return last_metrics, best_loss_metrics
 
     def run(self, train_dataloader, val_dataloader, fold=0):

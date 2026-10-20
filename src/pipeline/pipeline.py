@@ -1,282 +1,164 @@
-from abc import ABC
 import json
-import os
 import pathlib as pl
+import time
+from importlib import metadata
 import subprocess
 import tempfile
 
 import mlflow
-import numpy as np
+import mlflow.data
+import pandas as pd
 import torch
-from sklearn.metrics import classification_report, confusion_matrix
-
+from sklearn.metrics import classification_report, confusion_matrix, roc_curve
 from torch.utils.data import DataLoader
 
 from .job import TestJob, TrainJob
 
+from src.results_summary import summarize_metrics
+from src.pipeline.metrics import class_key
+from src.seed import seed_everything
 from src.utils import dictionary
 from src.dataset import NDBUfesDataset
 from src import logger
 
-class Pipeline(ABC):
-    train_job = None
-    test_job = None
+
+class Pipeline:
+    """Cross-validation over the folds that are not the test fold: one model per validation fold, each tested on the test fold."""
 
     def __init__(self, params, data_organizer):
         self.params = params
         self.data_organizer = data_organizer
-        self.train_run_ids = []
-        self.best_models = []
-        self.reuse_fold_checkpoints = {
-            int(fold): pl.Path(path)
-            for fold, path in self.params.reuse_fold_checkpoints.items()
-        }
-        self.training_repo = pl.Path(
-            os.environ.get(
-                "NDB_UFES_TRAINING_REPO",
-                pl.Path(__file__).resolve().parents[2],
-            )
+        self.repo = pl.Path(__file__).resolve().parents[2]
+
+    def _dataset(self, arrays, train):
+        paths, labels, records = arrays
+        return NDBUfesDataset(
+            paths,
+            labels,
+            classes_dict=self.data_organizer.train_classes_dict,
+            aug=self.data_organizer.aug if train else None,
+            transform=self.data_organizer.train_transform if train else self.data_organizer.test_transform,
+            metadata=records,
         )
 
-    def _inner_train(self, fold_num):
+    def _loaders(self, validation_fold):
+        """Training, validation and test loaders. The training order is shuffled with a generator seeded by the seed and the fold."""
+        train, validation, test = (self.data_organizer.split(validation_fold))
         batch_size = self.params.hyperparameters.other.batch_size
-
-        (train_paths, train_labels, train_metadata), (val_paths, val_labels, val_metadata) = self.data_organizer.data_per_fold(fold=fold_num, train=True)
-
-        train_dataset = NDBUfesDataset(train_paths, train_labels, 
-                                       classes_dict=self.data_organizer.train_classes_dict, 
-                                       aug=self.data_organizer.aug,
-                                       transform=self.data_organizer.train_transform,
-                                       metadata=train_metadata)
-        val_dataset = NDBUfesDataset(val_paths, val_labels, 
-                                     classes_dict=self.data_organizer.train_classes_dict,
-                                     aug=None,
-                                     transform=self.data_organizer.test_transform,
-                                     metadata=val_metadata)
-        
         generator = torch.Generator()
-        generator.manual_seed(self.params.seed + fold_num)
-        train_dataloader = DataLoader(
-            train_dataset,
-            batch_size=batch_size,
-            shuffle=True,
-            generator=generator,
-            num_workers=0,
-            pin_memory=False,
+        generator.manual_seed(self.params.seed + validation_fold)
+        return (
+            DataLoader(self._dataset(train, train=True), batch_size=batch_size, shuffle=True, generator=generator, num_workers=0, pin_memory=False),
+            DataLoader(self._dataset(validation, train=False), batch_size=batch_size, shuffle=False),
+            DataLoader(self._dataset(test, train=False), batch_size=batch_size, shuffle=False),
         )
-        val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-
-        metrics, best_loss_metrics = self.train_job.run(train_dataloader, val_dataloader, fold=fold_num)
-        return metrics, best_loss_metrics
-
-    def _test_dataloader(self):
-        batch_size = self.params.hyperparameters.other.batch_size
-        test_paths, test_labels, test_metadata = self.data_organizer.data_per_fold(fold=self.params.dataset.test_fold, train=False)
-        test_dataset = NDBUfesDataset(
-            test_paths,
-            test_labels,
-            classes_dict=self.data_organizer.train_classes_dict,
-            aug=None,
-            transform=self.data_organizer.test_transform,
-            metadata=test_metadata,
-        )
-        return DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
-
-    def _validation_dataloader(self, fold_num):
-        batch_size = self.params.hyperparameters.other.batch_size
-        (_, _, _), (val_paths, val_labels, val_metadata) = self.data_organizer.data_per_fold(
-            fold=fold_num,
-            train=True,
-        )
-        val_dataset = NDBUfesDataset(
-            val_paths,
-            val_labels,
-            classes_dict=self.data_organizer.train_classes_dict,
-            aug=None,
-            transform=self.data_organizer.test_transform,
-            metadata=val_metadata,
-        )
-        return DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-
 
     def train(self):
-        train_type = self.params.hyperparameters.other.train_type.value
+        """Train one model per validation fold and test each on the test fold. Returns the mean and standard deviation of the metrics over the folds."""
         self.train_job = TrainJob(self.params, self.data_organizer.train_num_classes)
+        rows = []
+        for fold in self.data_organizer.cv_folds:
+            fold_started = time.perf_counter()
+            with mlflow.start_run(nested=True, run_name=f"fold_{fold}", tags={"validation_fold": str(fold), "test_fold": str(self.data_organizer.test_fold)}):
+                logger.info(f"| Fold {fold}: validation | test fold {self.data_organizer.test_fold} |")
+                mlflow.log_params({"fold": fold, "fold_seed": self.params.seed + fold})
+                seed_everything(self.params.seed + fold)
+                self.train_job.checkpoint_description = self._checkpoint_description(fold)
+                self._log_json_artifact(self.data_organizer.split_manifest(fold), f"split_manifest_fold_{fold}.json", "split_manifests")
+                train_loader, validation_loader, test_loader = self._loaders(fold)
 
-        if train_type == "holdout":
-            with mlflow.start_run(nested=True):
-                self._inner_train(self.params.dataset.cv_folds[0])
-            
-        elif train_type == "cross_validation":
-            val_acc_list, val_balanced_acc_list, val_recall_list, val_precision_list = [], [], [], []
-            val_macro_f1_list = []
-            test_acc_list, test_balanced_acc_list, test_recall_list, test_precision_list = [], [], [], []
-            test_macro_f1_list = []
-
-            for fold_num in self.params.dataset.cv_folds:
-                with mlflow.start_run(nested=True, run_name=f"fold_{fold_num}"):
-                    run = mlflow.active_run()
-                    run_id = run.info.run_id
-                    self.train_run_ids.append(run_id)
-                    
-                    logger.info("---------------------------------")
-                    logger.info(f"| Starting fold {fold_num} |")
-                    mlflow.log_param("fold", fold_num)
-                    self._log_split_manifest(fold_num)
-                    reused_checkpoint = self.reuse_fold_checkpoints.get(fold_num)
-                    if reused_checkpoint:
-                        logger.info(f"| Reusing completed checkpoint for fold {fold_num} |")
-                        mlflow.log_param("reused_checkpoint", str(reused_checkpoint))
-                        mlflow.log_param("training_skipped", True)
-                        reused_model = TestJob(
-                            self.params,
-                            self.data_organizer.train_num_classes,
-                            str(reused_checkpoint),
-                        )
-                        best_val_metrics, _ = reused_model.run(
-                            self._validation_dataloader(fold_num),
-                            create_artifacts=False,
-                            stage="val",
-                        )
-                        best_model = str(reused_checkpoint)
-                    else:
-                        _, best_val_metrics = self._inner_train(fold_num)
-
-                        models_path = self.train_job.models_saved
-                        best_model = [best for best in models_path if "best.pt" in best and f"fold_{fold_num}" in best]
-
-                        if not len(best_model):
-                            raise ValueError("Best model not found.")
-                        if len(best_model) > 1:
-                            raise TypeError("More than one best model. Type should be string to path not list of paths,")
-                        else:
-                            best_model = best_model[0]
-
-                    val_acc_list.append(best_val_metrics["val_acc"])
-                    val_balanced_acc_list.append(best_val_metrics["val_balanced_acc"])
-                    val_recall_list.append(best_val_metrics["val_recall"])
-                    val_precision_list.append(best_val_metrics["val_precision"])
-                    val_macro_f1_list.append(best_val_metrics["val_macro_f1"])
-
+                _, best_validation = self.train_job.run(train_loader, validation_loader, fold=fold)
+                best_model = self.train_job.best_model_path
+                if self.params.run.checkpoints_in_mlflow:
                     mlflow.log_artifact(best_model, "model")
-                    mlflow.log_param("model_path", best_model)
-                    self.best_models.append({"fold": fold_num, "path": best_model, "run_id": run_id})
+                mlflow.log_param("model_path", best_model)
+                mlflow.log_metric("checkpoint_mb", pl.Path(best_model).stat().st_size / 2**20)
 
-                    test_metrics, test_predictions = self._evaluate_model_on_test(best_model)
-                    prefixed_test_metrics = {f"heldout_{key}": item for key, item in test_metrics.items()}
-                    mlflow.log_metrics(prefixed_test_metrics)
-                    self._log_prediction_artifacts(test_predictions, artifact_dir="heldout_predictions")
+                test_job = TestJob(self.params, self.data_organizer.train_num_classes, best_model)
+                test_metrics, predictions = test_job.run(test_loader, stage="test")
+                class_names = sorted(self.data_organizer.train_classes_dict, key=self.data_organizer.train_classes_dict.get)
+                if "histopath_id" in predictions:  # the patch table was given: judge the model per picture and per patient too
+                    unit_metrics, unit_tables = summarize_metrics(predictions, class_names, prefix="test")
+                    test_metrics |= unit_metrics
+                    for unit, table in unit_tables.items():
+                        self._log_dataframe_artifact(table, f"{unit}_predictions.csv", "heldout_predictions")
+                heldout = {f"heldout_{key}": value for key, value in test_metrics.items()}
+                mlflow.log_metrics(heldout)
+                self._log_prediction_artifacts(predictions, artifact_dir="heldout_predictions")
+                self._log_dataframe_artifact(self._roc_curves(predictions, class_names), "roc_curves.csv", "heldout_predictions")
+                mlflow.log_metric("fold_seconds", time.perf_counter() - fold_started)
+                rows.append(best_validation | heldout)
+                logger.info(
+                    f"Fold {fold} | validation balanced accuracy {best_validation['val_balanced_acc'] * 100:0.3f}% | "
+                    f"test balanced accuracy {test_metrics['test_balanced_acc'] * 100:0.3f}%"
+                )
+            mlflow.log_metrics({f"fold_{key}": value for key, value in rows[-1].items()}, step=fold)
 
-                    test_acc_list.append(test_metrics["test_acc"])
-                    test_balanced_acc_list.append(test_metrics["test_balanced_acc"])
-                    test_recall_list.append(test_metrics["test_recall"])
-                    test_precision_list.append(test_metrics["test_precision"])
-                    test_macro_f1_list.append(test_metrics["test_macro_f1"])
+        table = pd.DataFrame(rows)
+        summary = {f"avg_{key}": float(table[key].mean()) for key in table} | {f"std_{key}": float(table[key].std(ddof=0)) for key in table}
+        mlflow.log_metrics(summary)
+        logger.info(
+            f"Test balanced accuracy over {len(rows)} folds: {summary['avg_heldout_test_balanced_acc'] * 100:0.3f}% "
+            f"+/- {summary['std_heldout_test_balanced_acc'] * 100:0.3f}"
+        )
+        return summary
 
-                    logger.info(f"| Finished training fold {fold_num}|")
-                    logger.info(f"Best model metrics | Accuracy: {best_val_metrics['val_acc'] * 100: 0.3f}% | Balanced accuracy: {best_val_metrics['val_balanced_acc'] * 100: 0.3f}% | Macro F1: {best_val_metrics['val_macro_f1'] * 100: 0.3f}% | Recall: {best_val_metrics['val_recall'] * 100: 0.3f}% | Precision {best_val_metrics['val_precision'] * 100: 0.3f}%")
-                    logger.info("---------------------------------\n")
-                    
-                metrics = {f"fold_{key}": item for key, item in best_val_metrics.items()}
-
-                mlflow.log_metrics(metrics, step=fold_num)
-                
-            avg_std_metrics = {
-                "avg_val_acc": np.mean(val_acc_list), 
-                "avg_val_balanced_acc": np.mean(val_balanced_acc_list), 
-                "avg_val_recall": np.mean(val_recall_list), 
-                "avg_val_precision": np.mean(val_precision_list), 
-                "avg_val_macro_f1": np.mean(val_macro_f1_list),
-                "std_val_acc": np.std(val_acc_list), 
-                "std_val_balanced_acc": np.std(val_balanced_acc_list), 
-                "std_val_recall": np.std(val_recall_list), 
-                "std_val_precision": np.std(val_precision_list), 
-                "std_val_macro_f1": np.std(val_macro_f1_list),
-                "avg_heldout_test_acc": np.mean(test_acc_list),
-                "avg_heldout_test_balanced_acc": np.mean(test_balanced_acc_list),
-                "avg_heldout_test_recall": np.mean(test_recall_list),
-                "avg_heldout_test_precision": np.mean(test_precision_list),
-                "avg_heldout_test_macro_f1": np.mean(test_macro_f1_list),
-                "std_heldout_test_acc": np.std(test_acc_list),
-                "std_heldout_test_balanced_acc": np.std(test_balanced_acc_list),
-                "std_heldout_test_recall": np.std(test_recall_list),
-                "std_heldout_test_precision": np.std(test_precision_list),
-                "std_heldout_test_macro_f1": np.std(test_macro_f1_list),
-            }
-            mlflow.log_metrics(avg_std_metrics)
-            logger.info(f"Average validation accuracy: {avg_std_metrics['avg_val_acc'] * 100: 0.3f}% +/- {avg_std_metrics['std_val_acc'] * 100: 0.3f}")
-            logger.info(f"Average held-out test accuracy: {avg_std_metrics['avg_heldout_test_acc'] * 100: 0.3f}% +/- {avg_std_metrics['std_heldout_test_acc'] * 100: 0.3f}")
-
-        else:
-            raise ValueError(f"String value {train_type} invalid for chosing training type of job.")   
-        
-            
-    def test(self):
-        if not self.best_models:
-            logger.info("No trained CV checkpoints found in this process; held-out testing is performed during training.")
-
-
-    def origin_test(self):
-        pass
-
+    def _checkpoint_description(self, fold):
+        organizer = self.data_organizer
+        return {
+            "model_name": self.params.hyperparameters.model.name.value,
+            "training_mode": self.params.training.mode,
+            "classes": sorted(organizer.train_classes_dict, key=organizer.train_classes_dict.get),
+            "preprocessing": organizer.preprocessing,
+            "fold": fold,
+            "test_fold": organizer.test_fold,
+            "seed": self.params.seed + fold,
+            "folds_csv_sha256": organizer.provenance()["folds_csv_sha256"],
+        }
 
     def log_params(self):
-        params_dict = self.params.model_dump()
-        params_dict_flatten = dictionary.flatten(params_dict)
-
-        mlflow.log_params(params_dict_flatten)
-        self._log_repo_metadata()
-        self._log_dataset_provenance()
-
-    def _evaluate_model_on_test(self, model_path):
-        test_job = TestJob(self.params, self.data_organizer.train_num_classes, model_path)
-        metrics, predictions = test_job.run(
-            self._test_dataloader(),
-            create_artifacts=False,
-            stage="test",
-        )
-        return metrics, predictions
-
-    def _log_split_manifest(self, fold_num):
-        manifest = self.data_organizer.split_manifest(fold_num)
-        self._log_json_artifact(manifest, f"split_manifest_fold_{fold_num}.json", "split_manifests")
-
-    def _log_dataset_provenance(self):
-        provenance = self.data_organizer.provenance()
-        for key, value in provenance.items():
-            if isinstance(value, (str, int, float)):
-                mlflow.log_param(f"dataset_{key}", value)
+        mlflow.log_params(dictionary.flatten(self.params.model_dump()))
+        git = {"git_commit": self._run_text(["git", "rev-parse", "HEAD"]), "git_status": self._run_text(["git", "status", "--short"])}
+        git["git_dirty"] = bool(git["git_status"]) and not git["git_status"].startswith("unavailable:")
+        mlflow.log_params({key: value for key, value in git.items() if len(str(value)) < 500})
+        self._log_json_artifact(git, "repo_metadata.json", "provenance")
+        versions = {package: metadata.version(package) for package in ("torch", "torchvision", "numpy", "timm", "transformers", "imgaug") if self._installed(package)}
+        mlflow.log_params({f"version_{package}": version for package, version in versions.items()})
+        provenance = self.data_organizer.provenance() | {"package_versions": versions}
+        mlflow.set_tags({"folds_sha256": provenance["folds_csv_sha256"], "git_commit": git["git_commit"], "git_dirty": str(git["git_dirty"])})
+        organizer = self.data_organizer
+        mlflow.log_input(mlflow.data.from_pandas(organizer.table, source=str(organizer.folds_csv), name="fold_assignments", targets="patch_diagnosis"), context="folds")
+        mlflow.log_artifact(str(organizer.folds_csv), "data")
+        mlflow.log_params({f"dataset_{key}": value for key, value in provenance.items() if isinstance(value, (str, int, float))})
         self._log_json_artifact(provenance, "dataset_provenance.json", "provenance")
 
-    def _log_repo_metadata(self):
-        metadata = {
-            "git_commit": self._run_text(["git", "rev-parse", "HEAD"]),
-            "git_status": self._run_text(["git", "status", "--short"]),
-            "dvc_status": self._run_text(["dvc", "status"]),
-        }
-        git_status = metadata["git_status"]
-        metadata["git_dirty"] = bool(
-            git_status and not git_status.startswith("unavailable:")
-        )
-        for key, value in metadata.items():
-            if isinstance(value, str) and len(value) < 500:
-                mlflow.log_param(key, value)
-        self._log_json_artifact(metadata, "repo_metadata.json", "provenance")
-
-    def _run_text(self, cmd):
+    @staticmethod
+    def _installed(package):
         try:
-            return subprocess.check_output(
-                cmd,
-                cwd=self.training_repo,
-                text=True,
-                stderr=subprocess.STDOUT,
-            ).strip()
+            metadata.version(package)
+            return True
+        except metadata.PackageNotFoundError:
+            return False
+
+    def _run_text(self, command):
+        try:
+            return subprocess.check_output(command, cwd=self.repo, text=True, stderr=subprocess.STDOUT).strip()
         except Exception as exc:
             return f"unavailable: {exc}"
 
+    @staticmethod
+    def _roc_curves(predictions, class_names):
+        """The points of the ROC curve of each class against the others."""
+        curves = []
+        for index, name in enumerate(class_names):
+            positive = predictions["y_true"] == index
+            if positive.any() and not positive.all():
+                fpr, tpr, thresholds = roc_curve(positive, predictions[f"prob_{class_key(name)}"])
+                curves.append(pd.DataFrame({"class": name, "fpr": fpr, "tpr": tpr, "threshold": thresholds}))
+        return pd.concat(curves, ignore_index=True)
+
     def _log_prediction_artifacts(self, predictions, artifact_dir):
         self._log_dataframe_artifact(predictions, "predictions.csv", artifact_dir)
-
         labels = sorted(self.data_organizer.train_classes_dict.values())
         report = classification_report(predictions["y_true"], predictions["y_pred"], labels=labels, output_dict=True, zero_division=0)
         matrix = confusion_matrix(predictions["y_true"], predictions["y_pred"], labels=labels)
@@ -294,4 +176,3 @@ class Pipeline(ABC):
             path = pl.Path(temp_dir) / filename
             path.write_text(json.dumps(payload, indent=2, default=str))
             mlflow.log_artifact(str(path), artifact_path=artifact_dir)
-        
