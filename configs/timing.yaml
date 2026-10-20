@@ -1,0 +1,16 @@
+# One epoch of each of the seven models of the article: it shows that every model builds, loads its weights and trains on this machine,
+# and how long an epoch takes (the seconds per epoch and per fold are logged to MLflow). It goes to the experiment ndb_ufes_trial.
+# Use it with:  uv run python main.py --params configs/timing.yaml
+extends: trial.yaml
+experiment:
+  models:
+    - resnet50
+    - mobilenetv2
+    - densenet121
+    - vgg16
+    - coat_lite_small
+    - pit_s_distilled_224
+    - vit_small_patch16_384
+hyperparameters:
+  other:
+    epochs: 1

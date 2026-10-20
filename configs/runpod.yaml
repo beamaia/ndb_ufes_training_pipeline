@@ -1,0 +1,9 @@
+# The settings of a RunPod machine. Use it with:  uv run python main.py --params configs/runpod.yaml
+# The MLflow server of the laptop is reached through an SSH reverse tunnel (see the README). Set the price of your pod below.
+extends: ../params.yaml
+dataset:
+  organizer: /workspace/ndb_ufes_data_organizer
+run:
+  hourly_cost: null # for example 0.79
+  tracking_uri: http://localhost:8001
+device: cuda

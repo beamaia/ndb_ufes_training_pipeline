@@ -1,0 +1,10 @@
+# A short run to try things out. It goes to the experiment ndb_ufes_trial, never to ndb_ufes_final.
+# Use it with:  uv run python main.py --params configs/trial.yaml
+extends: ../params.yaml
+run:
+  purpose: trial
+experiment:
+  models: [mobilenetv2]
+hyperparameters:
+  other:
+    epochs: 2
