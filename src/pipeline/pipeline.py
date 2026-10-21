@@ -15,7 +15,8 @@ from torch.utils.data import DataLoader
 from .job import TestJob, TrainJob
 
 from src.results_summary import summarize_metrics
-from src.pipeline.metrics import class_key
+from src.pipeline.metrics import board, class_key
+from src.validate_input.params import MODEL_FAMILY
 from src.seed import seed_everything
 from src.utils import dictionary
 from src.dataset import NDBUfesDataset
@@ -59,7 +60,8 @@ class Pipeline:
         rows = []
         for fold in self.data_organizer.cv_folds:
             fold_started = time.perf_counter()
-            with mlflow.start_run(nested=True, run_name=f"fold_{fold}", tags={"validation_fold": str(fold), "test_fold": str(self.data_organizer.test_fold)}):
+            model = self.params.hyperparameters.model.name.value
+            with mlflow.start_run(nested=True, run_name=f"{self.params.run_name}_fold_{fold}", tags={"model": model, "model_family": MODEL_FAMILY.get(model, "other"), "validation_fold": str(fold), "test_fold": str(self.data_organizer.test_fold)}):
                 logger.info(f"| Fold {fold}: validation | test fold {self.data_organizer.test_fold} |")
                 mlflow.log_params({"fold": fold, "fold_seed": self.params.seed + fold})
                 seed_everything(self.params.seed + fold)
@@ -72,7 +74,7 @@ class Pipeline:
                 if self.params.run.checkpoints_in_mlflow:
                     mlflow.log_artifact(best_model, "model")
                 mlflow.log_param("model_path", best_model)
-                mlflow.log_metric("checkpoint_mb", pl.Path(best_model).stat().st_size / 2**20)
+                mlflow.log_metrics(board({"checkpoint_mb": pl.Path(best_model).stat().st_size / 2**20}))
 
                 test_job = TestJob(self.params, self.data_organizer.train_num_classes, best_model)
                 test_metrics, predictions = test_job.run(test_loader, stage="test")
@@ -83,20 +85,20 @@ class Pipeline:
                     for unit, table in unit_tables.items():
                         self._log_dataframe_artifact(table, f"{unit}_predictions.csv", "heldout_predictions")
                 heldout = {f"heldout_{key}": value for key, value in test_metrics.items()}
-                mlflow.log_metrics(heldout)
+                mlflow.log_metrics(board(heldout))
                 self._log_prediction_artifacts(predictions, artifact_dir="heldout_predictions")
                 self._log_dataframe_artifact(self._roc_curves(predictions, class_names), "roc_curves.csv", "heldout_predictions")
-                mlflow.log_metric("fold_seconds", time.perf_counter() - fold_started)
+                mlflow.log_metrics(board({"fold_seconds": time.perf_counter() - fold_started}))
                 rows.append(best_validation | heldout)
                 logger.info(
                     f"Fold {fold} | validation balanced accuracy {best_validation['val_balanced_acc'] * 100:0.3f}% | "
                     f"test balanced accuracy {test_metrics['test_balanced_acc'] * 100:0.3f}%"
                 )
-            mlflow.log_metrics({f"fold_{key}": value for key, value in rows[-1].items()}, step=fold)
+            mlflow.log_metrics(board(rows[-1]), step=fold)  # the parent run: one point for each fold
 
         table = pd.DataFrame(rows)
         summary = {f"avg_{key}": float(table[key].mean()) for key in table} | {f"std_{key}": float(table[key].std(ddof=0)) for key in table}
-        mlflow.log_metrics(summary)
+        mlflow.log_metrics(board(table.mean().to_dict(), "_avg") | board(table.std(ddof=0).to_dict(), "_std"))
         logger.info(
             f"Test balanced accuracy over {len(rows)} folds: {summary['avg_heldout_test_balanced_acc'] * 100:0.3f}% "
             f"+/- {summary['std_heldout_test_balanced_acc'] * 100:0.3f}"

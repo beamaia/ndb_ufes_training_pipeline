@@ -22,7 +22,7 @@ from src.models.model_selector import ModelSelector
 from src.optimizer.optimizer_scheduler_selector import OptimizerSchedulerSelector
 from src.loss.loss_selector import LossSelector
 from src.early_stopper import EarlyStopper
-from src.pipeline.metrics import classification_metrics
+from src.pipeline.metrics import board, classification_metrics
 
 class TrainJob(BaseJob):
     job: JobType = JobType.train
@@ -256,8 +256,8 @@ class TrainJob(BaseJob):
                 save_checkpoint(best_model_path, self.model, {**self.checkpoint_description, "epoch": epoch + 1, "val_loss": float(best_loss)})
                 best_loss_metrics = {key:item for key, item in metrics.items() if "val" in key} | {"val_epoch_of_best_loss": epoch + 1}
 
-            mlflow.log_metrics(metrics, step=epoch)
-            mlflow.log_metrics({"learning_rate": self.optimizer.param_groups[0]['lr'], "epoch_seconds": time.perf_counter() - epoch_started}, step=epoch)
+            mlflow.log_metrics(board(metrics), step=epoch)
+            mlflow.log_metrics(board({"learning_rate": self.optimizer.param_groups[0]['lr'], "epoch_seconds": time.perf_counter() - epoch_started}), step=epoch)
 
             if isinstance(self.scheduler, ReduceLROnPlateau):
                 self.scheduler.step(metrics["val_loss"])
@@ -275,7 +275,7 @@ class TrainJob(BaseJob):
                 train_dataloader,
             )
             if should_stop:
-                mlflow.log_metric("early_stopped_epoch", epoch + 1)
+                mlflow.log_metrics(board({"early_stopped_epoch": epoch + 1}))
                 logger.info(
                     f"Early stopping triggered at epoch {epoch + 1} "
                     f"after {early_stopping.patience} stale validation-loss epochs."
@@ -299,7 +299,7 @@ class TrainJob(BaseJob):
         cost = {"epochs_run": float(epoch + 1 - start_epoch), "train_seconds": time.perf_counter() - train_started}
         if torch.cuda.is_available():
             cost["peak_gpu_memory_mb"] = torch.cuda.max_memory_allocated() / 2**20
-        mlflow.log_metrics(cost)
+        mlflow.log_metrics(board(cost))
         logger.info(f"Finished training at {datetime.now()}")
 
         return last_metrics, best_loss_metrics

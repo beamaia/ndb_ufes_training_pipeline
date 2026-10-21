@@ -93,3 +93,35 @@ def roc_auc_metrics(labels: Iterable[int], probabilities: np.ndarray, class_name
     if metrics:
         metrics[f"{prefix}_roc_auc_macro"] = float(np.mean(list(metrics.values())))
     return metrics
+
+
+TRAINING_METRICS = {"learning_rate", "epoch_seconds", "epochs_run", "train_seconds", "peak_gpu_memory_mb", "early_stopped_epoch", "fold_seconds", "checkpoint_mb"}
+RUN_METRICS = {"run_seconds", "cost_usd"}
+TEST_UNITS = ("picture_vs_ndb", "picture", "patient")  # what the test metrics can be about besides the patches; picture_vs_ndb has to come before picture
+
+
+def board_name(key: str) -> str:
+    """The name of a metric on the MLflow board. A slash makes a section there, so the metrics are grouped instead of one list of about 90:
+    ``val_balanced_acc`` is ``val/balanced_acc``, ``heldout_test_roc_auc_oscc`` is ``test_patch/roc_auc_oscc``, ``heldout_test_picture_cm_oscc_as_oscc``
+    is ``test_picture_cm/oscc_as_oscc`` (``test_patch``, ``test_picture``, ``test_patient`` and ``test_picture_vs_ndb`` each have a section, and each ``_cm``
+    section holds the cells of a confusion matrix). The time, memory and size metrics are in ``training/`` and ``run/``."""
+    if key in TRAINING_METRICS:
+        return f"training/{key}"
+    if key in RUN_METRICS:
+        return f"run/{key}"
+    stage, _, rest = key.removeprefix("heldout_").partition("_")
+    group = stage
+    if stage == "test":
+        group = "test_patch"
+        for unit in TEST_UNITS:
+            if rest.startswith(f"{unit}_"):
+                group, rest = f"test_{unit}", rest[len(unit) + 1:]
+                break
+    if rest.startswith("cm_"):
+        group, rest = f"{group}_cm", rest[3:]
+    return f"{group}/{rest}" if rest else key
+
+
+def board(metrics: dict[str, float], suffix: str = "") -> dict[str, float]:
+    """The metrics under their board names (see ``board_name``), with ``suffix`` added to each name."""
+    return {board_name(key) + suffix: value for key, value in metrics.items()}

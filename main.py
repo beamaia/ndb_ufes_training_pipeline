@@ -29,6 +29,7 @@ from src.config import load_params
 from src.download import fetch_patches
 from src.dataset import LeakageSafeNDBUfesOrganizer
 from src.pipeline import Pipeline
+from src.pipeline.metrics import board
 from src.validate_input.params import MODEL_FAMILY
 from src import logger, log_file
 
@@ -147,9 +148,9 @@ def run_model(params, model, settings_files, experiment_id: str, system_metrics:
         pipeline.log_params()
         pipeline.train()
         seconds = time.perf_counter() - started
-        mlflow.log_metric("run_seconds", seconds)
+        mlflow.log_metrics(board({"run_seconds": seconds}))
         if params.run.hourly_cost is not None:
-            mlflow.log_metric("cost_usd", seconds / 3600 * params.run.hourly_cost)
+            mlflow.log_metrics(board({"cost_usd": seconds / 3600 * params.run.hourly_cost}))
         mlflow.log_artifact(log_file)
 
 

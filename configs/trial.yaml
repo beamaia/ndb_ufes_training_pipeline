@@ -3,6 +3,7 @@
 extends: ../params.yaml
 run:
   purpose: trial
+  checkpoints_in_mlflow: true # as in the official run, so that a trial also tries the upload of the checkpoints
 experiment:
   models: [mobilenetv2]
 hyperparameters:
