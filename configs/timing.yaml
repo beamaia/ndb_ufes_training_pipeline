@@ -2,6 +2,8 @@
 # and how long an epoch takes (the seconds per epoch and per fold are logged to MLflow). It goes to the experiment ndb_ufes_trial.
 # Use it with:  uv run python main.py --params configs/timing.yaml
 extends: trial.yaml
+run:
+  last_checkpoints: 0 # with one epoch the best and the last checkpoint are the same weights; the 12 models would fill the volume
 experiment:
   models:
     - resnet50

@@ -147,6 +147,8 @@ def run_model(params, model, settings_files, experiment_id: str, system_metrics:
         pipeline = Pipeline(run_params, LeakageSafeNDBUfesOrganizer(run_params, check=False))  # the data was checked above
         pipeline.log_params()
         pipeline.train()
+        if params.run.delete_checkpoints_after_upload:
+            pipeline.delete_checkpoints()
         seconds = time.perf_counter() - started
         mlflow.log_metrics(board({"run_seconds": seconds}))
         if params.run.hourly_cost is not None:

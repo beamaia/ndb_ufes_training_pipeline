@@ -18,4 +18,4 @@ experiment:
 run:
   max_cost_usd: 20 # no new model starts after this much; the balance should be higher, because the model that is running is not stopped
   checkpoints_in_mlflow: true # the best checkpoint of each fold, when the fold ends, is uploaded to the MLflow server on the laptop (its artifacts folder), so a pod that dies loses at most the fold that is training
-  last_checkpoints: 0 # the pod's volume is 30 GB and the checkpoints are written there first: the best of each fold only (the last epochs of 12 models would not fit); 1 keeps the last epoch as well
+  delete_checkpoints_after_upload: true # when a model has finished, its checkpoints (the best and the last epoch of each fold) are deleted from the pod: they are in MLflow, on the laptop, and the pod's volume is small

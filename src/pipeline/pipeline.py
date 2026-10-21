@@ -1,5 +1,6 @@
 import json
 import pathlib as pl
+import shutil
 import time
 from importlib import metadata
 import subprocess
@@ -72,8 +73,9 @@ class Pipeline:
 
                 _, best_validation = self.train_job.run(train_loader, validation_loader, fold=fold)
                 best_model = self.train_job.best_model_path
-                if self.params.run.checkpoints_in_mlflow:
-                    mlflow.log_artifact(best_model, "model")
+                if self.params.run.checkpoints_in_mlflow:  # the best checkpoint and the last epochs (run.last_checkpoints)
+                    for checkpoint in [best_model, *sorted(pl.Path(best_model).parent.glob("*_epoch_*.pt"))]:
+                        mlflow.log_artifact(str(checkpoint), "model")
                 mlflow.log_param("model_path", best_model)
                 mlflow.log_metrics(board({"checkpoint_mb": pl.Path(best_model).stat().st_size / 2**20}))
 
@@ -105,6 +107,11 @@ class Pipeline:
             f"+/- {summary['std_heldout_test_balanced_acc'] * 100:0.3f}"
         )
         return summary
+
+    def delete_checkpoints(self):
+        """Delete the checkpoints of this model from this machine, once they are in MLflow."""
+        shutil.rmtree(self.train_job.checkpoint_root)
+        logger.info(f"Deleted the checkpoints in {self.train_job.checkpoint_root}")
 
     def _checkpoint_description(self, fold):
         organizer = self.data_organizer

@@ -113,6 +113,7 @@ class RunSettings(Strict):
     tracking_uri: str | None = None  # MLflow server; the credentials stay in .env
     last_checkpoints: int = Field(1, ge=0)  # besides the best checkpoint, each fold keeps the checkpoints of its last epochs, this many (1 is the last epoch); the older ones are deleted
     checkpoints_in_mlflow: bool = False  # a copy of each checkpoint in the MLflow artifacts; off by default, it doubles the disk space
+    delete_checkpoints_after_upload: bool = False  # when a model has finished, delete its checkpoints from this machine (needs checkpoints_in_mlflow): they are in MLflow, and the disk is small
     num_workers: int = Field(0, ge=0)  # processes that load and augment the images for the GPU; 0 does it in the main process. The same seed gives the same run only with the same number of workers
     max_cost_usd: float | None = Field(None, gt=0)  # no new model starts once this settings file has cost this much (needs hourly_cost); a model that is running is not stopped
 
@@ -120,6 +121,8 @@ class RunSettings(Strict):
     def cost_limit_needs_a_price(self):
         if self.max_cost_usd is not None and self.hourly_cost is None:
             raise ValueError("run.max_cost_usd needs run.hourly_cost")
+        if self.delete_checkpoints_after_upload and not self.checkpoints_in_mlflow:
+            raise ValueError("run.delete_checkpoints_after_upload needs run.checkpoints_in_mlflow: the checkpoints would be lost")
         return self
 
 
