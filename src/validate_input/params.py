@@ -113,6 +113,13 @@ class RunSettings(Strict):
     tracking_uri: str | None = None  # MLflow server; the credentials stay in .env
     last_checkpoints: int = Field(1, ge=0)  # besides the best checkpoint, each fold keeps the checkpoints of its last epochs, this many (1 is the last epoch); the older ones are deleted
     checkpoints_in_mlflow: bool = False  # a copy of each checkpoint in the MLflow artifacts; off by default, it doubles the disk space
+    max_cost_usd: float | None = Field(None, gt=0)  # no new model starts once this settings file has cost this much (needs hourly_cost); a model that is running is not stopped
+
+    @model_validator(mode="after")
+    def cost_limit_needs_a_price(self):
+        if self.max_cost_usd is not None and self.hourly_cost is None:
+            raise ValueError("run.max_cost_usd needs run.hourly_cost")
+        return self
 
 
 class Training(Strict):
