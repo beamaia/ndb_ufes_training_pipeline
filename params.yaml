@@ -16,7 +16,7 @@ run:
   hourly_cost: null # price of the machine per hour in dollars; the cost of the run is logged
   tracking_uri: null # the MLflow server; null uses MLFLOW_TRACKING_URI from .env, then http://localhost:8000/
   last_checkpoints: 1 # each fold keeps its best checkpoint and the checkpoint of its last epoch; the older ones are deleted (0 keeps only the best)
-  num_workers: 0 # processes that load and augment the images; 0 does it in the main process. The same seed gives the same run only with the same number
+  num_workers: 8 # processes that load and augment the images (0 does it in the main process, which is several times slower); the same seed gives the same run only with the same number, so it is part of the protocol
   checkpoints_in_mlflow: false # true also copies every checkpoint into MLflow, which doubles the disk space
 
 training:
