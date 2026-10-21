@@ -1,9 +1,9 @@
 # Experiment 1: the folds published with P-NDB-UFES (they leak: patches of one patient or picture are in several folds), trained with the same protocol and models as
 # Experiment 2 (the new folds, configs/final.yaml), for the comparison. The folds file comes from the organizer (scripts/phase1.py published-folds): the same patches and
-# labels, the published fold of each patch (the sixth published fold is the test fold, 5), and every patch its own case group. Own MLflow experiment: ndb_ufes_experiment_1.
+# labels, the published fold of each patch (the sixth published fold is the test fold, 5), and every patch its own case group. Own MLflow experiment: ndb_ufes_exp1.
 # Use it with:  ./pod.sh --params configs/experiment_1.yaml
 extends: final.yaml
 dataset:
   folds_csv: results/phase1/folds/fold_assignments_published.csv
 run:
-  purpose: experiment_1
+  purpose: exp1

@@ -16,6 +16,7 @@ experiment:
     - swin_base_patch4_window7_224
     - convnext_large
 run:
+  purpose: exp2 # the MLflow experiment ndb_ufes_exp2: Experiment 2, the new folds
   max_cost_usd: 20 # no new model starts after this much; the balance should be higher, because the model that is running is not stopped
   checkpoints_in_mlflow: true # the best checkpoint of each fold, when the fold ends, is uploaded to the MLflow server on the laptop (its artifacts folder), so a pod that dies loses at most the fold that is training
   delete_checkpoints_after_upload: true # when a model has finished, its checkpoints (the best and the last epoch of each fold) are deleted from the pod: they are in MLflow, on the laptop, and the pod's volume is small
