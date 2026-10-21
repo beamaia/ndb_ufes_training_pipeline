@@ -7,7 +7,8 @@ set -euo pipefail
 cd "$(dirname "$0")"
 VOLUME=$(cd .. && pwd)
 ORGANIZER="$VOLUME/ndb_ufes_data_organizer"
-export UV_LINK_MODE=copy  # the package cache stays on the pod's own disk (the volume is billed per GB); only the environment, .venv, is kept on the volume
+export UV_CACHE_DIR=/tmp/uv-cache  # the package cache on the pod's own disk: HOME can be /workspace, and the volume is billed per GB
+export UV_LINK_MODE=copy  # the environment, .venv, is on the volume and the cache is not
 
 [ -f .env ] || { echo "No .env here: it needs the MLflow address, user and password (MLFLOW_*) and HF_TOKEN. See the README." >&2; exit 1; }
 for file in results/phase1/folds/fold_assignments.csv results/phase0/dataset_tables/patch_table_public.csv; do
