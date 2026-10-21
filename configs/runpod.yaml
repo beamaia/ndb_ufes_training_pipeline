@@ -1,9 +1,10 @@
 # The settings of a RunPod machine. Use it with:  uv run python main.py --params configs/runpod.yaml
-# The MLflow server of the laptop is reached through an SSH reverse tunnel (see the README). Set the price of your pod below.
+# The MLflow server of the laptop is reached through an SSH reverse tunnel (see the README).
+# hourly_cost is the price of ONE GPU: with several trainings side by side on one pod, each process logs its own cost.
 extends: ../params.yaml
 dataset:
   organizer: /workspace/ndb_ufes_data_organizer
 run:
-  hourly_cost: null # for example 0.79
+  hourly_cost: 0.59 # an A40 (48 GB); change it when you rent another GPU
   tracking_uri: http://localhost:8001
 device: cuda

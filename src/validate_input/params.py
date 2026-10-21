@@ -93,6 +93,7 @@ class Dataset(Strict):
     patch_table: str | None = None  # patch_table_public.csv of the data organizer; adds the picture of each patch, for the per-picture metrics
     folds: list[int] = Field(default_factory=lambda: [0, 1, 2, 3, 4, 5])
     test_fold: int = 5  # kept out of the cross-validation; every fold model is tested on it
+    source_zip: str | None = None  # where --download-data gets the patch images that are missing (a zip with files named <patch_id>.png)
 
     @model_validator(mode="after")
     def validate_folds(self):

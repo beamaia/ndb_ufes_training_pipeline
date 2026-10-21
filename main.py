@@ -25,6 +25,7 @@ def load_env(*files: Path) -> None:
 load_env(REPO / ".env", Path(os.getenv("MLFLOW_ENV_FILE", REPO.parent / "ndb_ufes_mlflow" / ".env")))
 
 from src.config import load_params
+from src.download import fetch_patches
 from src.dataset import LeakageSafeNDBUfesOrganizer
 from src.pipeline import Pipeline
 from src.validate_input.params import MODEL_FAMILY
@@ -34,6 +35,7 @@ from src import logger, log_file
 def arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--params", type=Path, nargs="+", default=[REPO / "params.yaml"], help="YAML files with the settings. Each file is one run, and the runs go one after the other. A file can extend another one (extends: params.yaml).")
+    parser.add_argument("--download-data", action="store_true", help="Download the patch images that are missing from dataset.source_zip, then go on.")
     parser.add_argument("--check-data", action="store_true", help="Check the folds file and the images, then stop.")
     parser.add_argument("--resume", action="store_true", help="Continue the folds that were interrupted.")
     return parser
@@ -57,10 +59,10 @@ def main() -> None:
     checked = set()  # the datasets already checked in this run
     for params, settings_files in runs:
         logger.info(f"Settings file: {settings_files[-1]}")
-        run(params, settings_files, args.check_data, checked)
+        run(params, settings_files, args.check_data, args.download_data, checked)
 
 
-def run(params, settings_files, check_data: bool, checked: set) -> None:
+def run(params, settings_files, check_data: bool, download_data: bool, checked: set) -> None:
     """The runs of one settings file: every model in it, one after the other."""
     models = params.experiment.models or [params.hyperparameters.model.name]
 
@@ -73,6 +75,11 @@ def run(params, settings_files, check_data: bool, checked: set) -> None:
         logger.info("Data already checked in this run")
     else:
         missing = organizer.missing_images()
+        if missing and download_data:
+            if not dataset.source_zip:
+                raise ValueError("--download-data needs dataset.source_zip in the settings file")
+            fetch_patches(dataset.source_zip, Path(dataset.patch_dir), missing)
+            missing = organizer.missing_images()
         if missing:
             raise FileNotFoundError(f"{len(missing)} patch images are missing in {dataset.patch_dir}, for example {missing[:5]}")
         checked.add(dataset_key)

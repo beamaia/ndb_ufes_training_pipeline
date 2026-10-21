@@ -1,4 +1,4 @@
-# One epoch of each of the seven models of the article: it shows that every model builds, loads its weights and trains on this machine,
+# One epoch of each model: the seven of the article and the five added after it. It shows that every model builds, loads its weights and trains on this machine,
 # and how long an epoch takes (the seconds per epoch and per fold are logged to MLflow). It goes to the experiment ndb_ufes_trial.
 # Use it with:  uv run python main.py --params configs/timing.yaml
 extends: trial.yaml
@@ -11,6 +11,11 @@ experiment:
     - coat_lite_small
     - pit_s_distilled_224
     - vit_small_patch16_384
+    - efficientnet_b0
+    - efficientnet_b3
+    - swin_tiny_patch4_window7_224
+    - swin_base_patch4_window7_224
+    - convnext_large
 hyperparameters:
   other:
     epochs: 1

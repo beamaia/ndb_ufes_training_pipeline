@@ -8,6 +8,7 @@ dataset:
   patch_table: results/phase0/dataset_tables/patch_table_public.csv # gives the picture of each patch; null leaves out the per-picture and per-patient metrics
   folds: [0, 1, 2, 3, 4, 5]
   test_fold: 5 # kept out of the cross-validation; every fold model is tested on it
+  source_zip: https://data.mendeley.com/public-api/zip/bbmmm4wgr8/download/4 # the public NDB-UFES zip; --download-data takes the patch images that are missing from it
 
 run:
   purpose: final # the MLflow experiment is ndb_ufes_<purpose>
