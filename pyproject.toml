@@ -17,7 +17,9 @@ dependencies = [
     "opencv-python==4.11.0.86",
     "pandas==2.3.1",
     "pathspec==0.12.1",
+    "psutil",  # MLflow system metrics: processor, memory, disk, network
     "pydantic==2.11.7",
+    "pynvml",  # and the NVIDIA GPU: MLflow reads it only if this is installed
     "python-dotenv",
     "pyyaml==6.0.2",
     "scikit-learn",
