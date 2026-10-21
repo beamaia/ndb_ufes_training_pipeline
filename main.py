@@ -9,6 +9,7 @@ import mlflow
 import torch
 import yaml
 from dotenv import dotenv_values
+from mlflow.exceptions import MlflowException
 
 REPO = Path(__file__).resolve().parent
 
@@ -94,36 +95,62 @@ def run(params, settings_files, check_data: bool, download_data: bool, checked: 
         system_metrics = True
     except ImportError:
         system_metrics = False
-    for model in models:
-        run_params = params.model_copy(deep=True)
-        run_params.hyperparameters.model.name = model
-        optimizer = run_params.hyperparameters.optimizer.name.value
-        run_params.run_name = "_".join(part for part in (model.value, optimizer, params.run.suffix) if part)
-        logger.info(run_params)
-        tags = {
-            "model": model.value, "model_family": MODEL_FAMILY.get(model.value, "other"), "optimizer": optimizer, "task": "multiclass", "purpose": params.run.purpose,
-            "test_fold": str(run_params.dataset.test_fold), "seed": str(run_params.seed), "epochs": str(run_params.hyperparameters.other.epochs),
-            "batch_size": str(run_params.hyperparameters.other.batch_size), **hardware(run_params.device),
-        }
-        with mlflow.start_run(
-            run_name=run_params.run_name,
-            experiment_id=experiment.experiment_id,
-            tags=tags,
-            description="Multiclass patch classification, five cross-validation folds, every fold model tested on the test fold.",
-            log_system_metrics=system_metrics,
-        ):
-            started = time.perf_counter()
-            for file in settings_files:  # the file, the ones it extends, and what they add up to
-                mlflow.log_artifact(str(file), "config")
-            mlflow.log_text(yaml.safe_dump(run_params.model_dump(mode="json"), sort_keys=False), "config/merged_params.yaml")
-            pipeline = Pipeline(run_params, LeakageSafeNDBUfesOrganizer(run_params, check=False))  # the data was checked above
-            pipeline.log_params()
-            pipeline.train()
-            seconds = time.perf_counter() - started
-            mlflow.log_metric("run_seconds", seconds)
-            if params.run.hourly_cost is not None:
-                mlflow.log_metric("cost_usd", seconds / 3600 * params.run.hourly_cost)
-            mlflow.log_artifact(log_file)
+    run_models(params, models, settings_files, experiment.experiment_id, system_metrics)
+
+
+def run_models(params, models, settings_files, experiment_id: str, system_metrics: bool) -> None:
+    """The models one after the other. A model that fails does not stop the others (the failures are reported at the end), unless MLflow itself fails, which would
+    fail all of them. With run.max_cost_usd, no new model starts once this settings file has cost that much."""
+    started = time.perf_counter()
+    failed = []
+    for index, model in enumerate(models):
+        cost = (time.perf_counter() - started) / 3600 * (params.run.hourly_cost or 0)
+        if params.run.max_cost_usd is not None and cost >= params.run.max_cost_usd:
+            logger.warning(f"Cost limit of ${params.run.max_cost_usd:.2f} reached (${cost:.2f}); not started: {[left.value for left in models[index:]]}")
+            break
+        try:
+            run_model(params, model, settings_files, experiment_id, system_metrics)
+        except MlflowException:
+            raise
+        except Exception:
+            logger.exception(f"{model.value} failed; the next model goes on")
+            failed.append(model.value)
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+    if failed:
+        raise RuntimeError(f"These models failed: {failed}")
+
+
+def run_model(params, model, settings_files, experiment_id: str, system_metrics: bool) -> None:
+    run_params = params.model_copy(deep=True)
+    run_params.hyperparameters.model.name = model
+    optimizer = run_params.hyperparameters.optimizer.name.value
+    run_params.run_name = "_".join(part for part in (model.value, optimizer, params.run.suffix) if part)
+    logger.info(run_params)
+    tags = {
+        "model": model.value, "model_family": MODEL_FAMILY.get(model.value, "other"), "optimizer": optimizer, "task": "multiclass", "purpose": params.run.purpose,
+        "test_fold": str(run_params.dataset.test_fold), "seed": str(run_params.seed), "epochs": str(run_params.hyperparameters.other.epochs),
+        "batch_size": str(run_params.hyperparameters.other.batch_size), **hardware(run_params.device),
+    }
+    with mlflow.start_run(
+        run_name=run_params.run_name,
+        experiment_id=experiment_id,
+        tags=tags,
+        description="Multiclass patch classification, five cross-validation folds, every fold model tested on the test fold.",
+        log_system_metrics=system_metrics,
+    ):
+        started = time.perf_counter()
+        for file in settings_files:  # the file, the ones it extends, and what they add up to
+            mlflow.log_artifact(str(file), "config")
+        mlflow.log_text(yaml.safe_dump(run_params.model_dump(mode="json"), sort_keys=False), "config/merged_params.yaml")
+        pipeline = Pipeline(run_params, LeakageSafeNDBUfesOrganizer(run_params, check=False))  # the data was checked above
+        pipeline.log_params()
+        pipeline.train()
+        seconds = time.perf_counter() - started
+        mlflow.log_metric("run_seconds", seconds)
+        if params.run.hourly_cost is not None:
+            mlflow.log_metric("cost_usd", seconds / 3600 * params.run.hourly_cost)
+        mlflow.log_artifact(log_file)
 
 
 if __name__ == "__main__":
