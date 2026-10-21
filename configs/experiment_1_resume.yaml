@@ -1,0 +1,19 @@
+# Experiment 1 went on after it stopped: the laptop slept, the tunnel to MLflow was lost for longer than the runs wait, and the pod stopped itself. mobilenetv2 and efficientnet_b0
+# were finished; resnet50 was lost in its fifth fold (its partial runs must be deleted in MLflow first) and starts again, with the models that had not started. Same protocol and folds.
+# The limit is under the balance of the account: the models run cheapest first, so the expensive ones at the end are the ones it can leave out.
+# Use it with:  ./pod.sh --params configs/experiment_1_resume.yaml
+extends: experiment_1.yaml
+experiment:
+  models:
+    - resnet50
+    - densenet121
+    - efficientnet_b3
+    - swin_tiny_patch4_window7_224
+    - coat_lite_small
+    - pit_s_distilled_224
+    - vit_small_patch16_384
+    - vgg16
+    - swin_base_patch4_window7_224
+    - convnext_large
+run:
+  max_cost_usd: 11
