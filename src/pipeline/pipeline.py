@@ -16,8 +16,8 @@ from .job import TestJob, TrainJob
 
 from src.results_summary import summarize_metrics
 from src.pipeline.metrics import board, class_key
+from src.seed import seed_everything, seed_worker
 from src.validate_input.params import MODEL_FAMILY
-from src.seed import seed_everything
 from src.utils import dictionary
 from src.dataset import NDBUfesDataset
 from src import logger
@@ -48,10 +48,11 @@ class Pipeline:
         batch_size = self.params.hyperparameters.other.batch_size
         generator = torch.Generator()
         generator.manual_seed(self.params.seed + validation_fold)
+        workers = {"num_workers": self.params.run.num_workers, "worker_init_fn": seed_worker}  # the workers start again each epoch, from a seed drawn from the generator, so that a resumed fold repeats the same augmentations
         return (
-            DataLoader(self._dataset(train, train=True), batch_size=batch_size, shuffle=True, generator=generator, num_workers=0, pin_memory=False),
-            DataLoader(self._dataset(validation, train=False), batch_size=batch_size, shuffle=False),
-            DataLoader(self._dataset(test, train=False), batch_size=batch_size, shuffle=False),
+            DataLoader(self._dataset(train, train=True), batch_size=batch_size, shuffle=True, generator=generator, **workers),
+            DataLoader(self._dataset(validation, train=False), batch_size=batch_size, shuffle=False, **workers),
+            DataLoader(self._dataset(test, train=False), batch_size=batch_size, shuffle=False, **workers),
         )
 
     def train(self):

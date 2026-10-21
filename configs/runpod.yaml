@@ -7,4 +7,5 @@ dataset:
 run:
   hourly_cost: 0.59 # an A40 (48 GB); change it when you rent another GPU
   tracking_uri: http://localhost:8002
+  num_workers: 8 # the pod has 9 vCPUs; the images are loaded and augmented by 8 processes, the main one feeds the GPU
 device: cuda
