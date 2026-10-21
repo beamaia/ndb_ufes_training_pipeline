@@ -1,0 +1,21 @@
+# The official run, on the RunPod A40, every model with the full protocol (up to 150 epochs, early stopping), the cheapest first, so that the cost limit cuts the expensive ones.
+# Use it with:  ./pod.sh --params configs/final.yaml
+extends: runpod.yaml
+experiment:
+  models:
+    - mobilenetv2
+    - efficientnet_b0
+    - resnet50
+    - densenet121
+    - efficientnet_b3
+    - swin_tiny_patch4_window7_224
+    - coat_lite_small
+    - pit_s_distilled_224
+    - vit_small_patch16_384
+    - vgg16
+    - swin_base_patch4_window7_224
+    - convnext_large
+run:
+  max_cost_usd: 20 # no new model starts after this much; the balance should be higher, because the model that is running is not stopped
+  checkpoints_in_mlflow: true # the best checkpoint of each fold, when the fold ends, is uploaded to the MLflow server on the laptop (its artifacts folder), so a pod that dies loses at most the fold that is training
+  last_checkpoints: 0 # the pod's volume is 30 GB and the checkpoints are written there first: the best of each fold only (the last epochs of 12 models would not fit); 1 keeps the last epoch as well

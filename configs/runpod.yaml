@@ -6,5 +6,5 @@ dataset:
   organizer: /workspace/ndb_ufes_data_organizer
 run:
   hourly_cost: 0.59 # an A40 (48 GB); change it when you rent another GPU
-  tracking_uri: http://localhost:8001
+  tracking_uri: http://localhost:8002
 device: cuda
