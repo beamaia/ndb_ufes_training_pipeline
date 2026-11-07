@@ -1,0 +1,11 @@
+# The pathology foundation models, with the protocol of Experiment 2 (the new folds), end to end. They go to the same MLflow experiment as the other models of Experiment 2.
+# They are too large for batch size 30 in the memory of one GPU without gradient checkpointing, which recomputes the activations (slower, but it fits).
+# Needs access to the gated repositories on Hugging Face with the HF_TOKEN of the .env.
+# Use it with:  ./pod.sh --params configs/foundation.yaml
+extends: final.yaml
+experiment:
+  models:
+    - virchow2
+    - uni2_h
+training:
+  grad_checkpointing: true

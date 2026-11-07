@@ -52,6 +52,7 @@ class TrainJob(BaseJob):
             model_str,
             num_classes=self.num_classes,
             training_mode=self.params.training.mode,
+            grad_checkpointing=self.params.training.grad_checkpointing,
         ).model.to(self.device).to(self.node_type)
     
     def _prepare_optim_sched(self):

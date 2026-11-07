@@ -186,3 +186,6 @@ mlruns/
 models/
 .cache/torch/
 *.pt
+notebooks/cache/
+
+notebooks/logs/

@@ -43,7 +43,7 @@ class Pipeline:
             metadata=records,
         )
 
-    def _loaders(self, validation_fold):
+    def loaders(self, validation_fold):
         """Training, validation and test loaders. The training order is shuffled with a generator seeded by the seed and the fold."""
         train, validation, test = (self.data_organizer.split(validation_fold))
         batch_size = self.params.hyperparameters.other.batch_size
@@ -69,7 +69,7 @@ class Pipeline:
                 seed_everything(self.params.seed + fold)
                 self.train_job.checkpoint_description = self._checkpoint_description(fold)
                 self._log_json_artifact(self.data_organizer.split_manifest(fold), f"split_manifest_fold_{fold}.json", "split_manifests")
-                train_loader, validation_loader, test_loader = self._loaders(fold)
+                train_loader, validation_loader, test_loader = self.loaders(fold)
 
                 _, best_validation = self.train_job.run(train_loader, validation_loader, fold=fold)
                 best_model = self.train_job.best_model_path

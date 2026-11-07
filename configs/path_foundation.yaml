@@ -1,0 +1,28 @@
+# The settings of path_foundation.py: Path Foundation (TensorFlow) trained with the protocol of Experiment 2. Use it on the pod with:  uv run path_foundation.py
+purpose: exp2 # the MLflow experiment is ndb_ufes_<purpose>; the model goes in with the other models of Experiment 2
+organizer: /workspace/ndb_ufes_data_organizer # the data organizer repository: the folds file, the patch table and the images; the paths below start there
+folds_csv: results/phase1/folds/fold_assignments.csv
+patch_table: results/phase0/dataset_tables/patch_table_public.csv
+patch_dir: data/ndb_ufes/patch_level/images
+folds: [0, 1, 2, 3, 4, 5]
+test_fold: 5 # kept out of the cross-validation; every fold model is tested on it
+seed: 42 # each fold uses 42 plus the fold number
+batch_size: 30
+epochs: 150
+learning_rate: 0.001
+momentum: 0.9
+gradient_clip_norm: 1.0 # the one difference from the other models: without it plain SGD at this learning rate makes the model collapse to one class after the first epoch (the embedding of this model is large); null turns it off
+scheduler: # ReduceLROnPlateau on the validation loss
+  factor: 0.1
+  patience: 10
+  min_lr: 0.000001
+early_stopping:
+  patience: 15
+  min_delta: 0.001
+workers: 8 # processes that load and augment the images (0: in the main process)
+hourly_cost: 0.59 # dollars an hour of the machine: the cost of the run is logged
+tracking_uri: http://localhost:8002 # the MLflow server, through the tunnel to the laptop; null uses MLFLOW_TRACKING_URI of the .env
+limit_per_fold: null # a number takes only that many patches of each fold, to try the script
+huggingface: # the model of Google, at a fixed commit; needs access to it in the account of the HF_TOKEN
+  repo: google/path-foundation
+  revision: b50f2be6f055ea6ea8719f467ab44b38f37e2142

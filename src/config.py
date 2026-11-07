@@ -1,11 +1,22 @@
+import os
 from pathlib import Path
 
 import torch
 import yaml
+from dotenv import dotenv_values
 
 from src.validate_input.params import Parameters
 
 PATH_KEYS = ("folds_csv", "patch_dir", "patch_table")  # in the dataset section; a relative path starts at the data organizer repository
+
+
+def load_env(*files: Path) -> None:
+    """Read only the MLflow credentials and the Hugging Face token from the .env files; the other variables there (cloud keys, for example) stay out of this process."""
+    for file in files:
+        if file.exists():
+            for key, value in dotenv_values(file).items():
+                if value and (key.startswith("MLFLOW_") or key == "HF_TOKEN"):
+                    os.environ.setdefault(key, value)
 
 
 def deep_merge(base: dict, override: dict) -> dict:

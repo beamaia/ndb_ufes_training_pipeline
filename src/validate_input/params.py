@@ -48,11 +48,14 @@ class ModelEnum(str, Enum):
     coat_lite_small = "coat_lite_small"
     pit_s_distilled_224 = "pit_s_distilled_224"
     vit_small_patch16_384 = "vit_small_patch16_384"
+    virchow2 = "virchow2"
+    uni2_h = "uni2_h"
 
 
 MODEL_FAMILY = {
     **dict.fromkeys(["resnet50", "mobilenetv2", "densenet121", "vgg16", "efficientnetb4", "efficientnet_b0", "efficientnet_b3", "convnext_large"], "cnn"),
     **dict.fromkeys(["coat_lite_small", "pit_s_distilled_224", "vit_small_patch16_384", "swin_tiny_patch4_window7_224", "swin_base_patch4_window7_224"], "transformer"),
+    **dict.fromkeys(["virchow2", "uni2_h"], "pathology_foundation"),
 }
 
 
@@ -128,6 +131,7 @@ class RunSettings(Strict):
 
 class Training(Strict):
     mode: Literal["finetune", "frozen_head"] = "finetune"
+    grad_checkpointing: bool = False  # recompute the activations in the backward pass instead of keeping them: slower, but the large models fit in the memory of the GPU
 
 
 class EarlyStopping(Strict):

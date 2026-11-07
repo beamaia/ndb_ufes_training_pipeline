@@ -14,7 +14,7 @@ def load_checkpoint(path, device, node_type):
     """The model rebuilt from the checkpoint, ready on ``device``, and the description saved with it."""
     bundle = torch.load(path, map_location="cpu", weights_only=True)
     state_dict = bundle.pop("model_state_dict")
-    model = ModelSelector(bundle["model_name"], num_classes=len(bundle["classes"]), training_mode=bundle["training_mode"]).model
+    model = ModelSelector(bundle["model_name"], num_classes=len(bundle["classes"]), training_mode=bundle["training_mode"], pretrained=False).model  # the weights come from the checkpoint
     model.load_state_dict(state_dict, strict=True)
     return model.to(device).to(node_type), bundle
 

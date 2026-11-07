@@ -8,24 +8,14 @@ from pathlib import Path
 import mlflow
 import torch
 import yaml
-from dotenv import dotenv_values
 from mlflow.exceptions import MlflowException
 
 REPO = Path(__file__).resolve().parent
 
-
-def load_env(*files: Path) -> None:
-    """Read only the MLflow credentials and the Hugging Face token from the .env files; the other variables there (cloud keys, for example) stay out of this process."""
-    for file in files:
-        if file.exists():
-            for key, value in dotenv_values(file).items():
-                if value and (key.startswith("MLFLOW_") or key == "HF_TOKEN"):
-                    os.environ.setdefault(key, value)
-
+from src.config import load_env, load_params
 
 load_env(REPO / ".env", Path(os.getenv("MLFLOW_ENV_FILE", REPO.parent / "ndb_ufes_mlflow" / ".env")))
 
-from src.config import load_params
 from src.download import fetch_patches
 from src.dataset import LeakageSafeNDBUfesOrganizer
 from src.pipeline import Pipeline
