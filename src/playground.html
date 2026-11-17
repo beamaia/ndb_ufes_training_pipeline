@@ -1,0 +1,501 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>document.write(`<base href="${location.pathname.replace(/index\.html$/, "").replace(/\/?$/, "/")}">`)</script><!-- the page lives at a folder or under a path prefix (beamaia.com/oscc_playground), with or without the last slash: every address below is relative to it -->
+<title>Patch playground</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap">
+<style>
+/* Every colour of the page is here. The theme is the light one of the data wiki (ndb_ufes_data_organizer/docs/styles/labcin.css).
+   The classes are on a scale of severity: the two leukoplakias in the middle (amber, orange), OSCC at the end (crimson); darker with severity, so the order reads without colour vision.
+   The script reads the class colours from here. */
+:root {
+  --blue: #365cc1; --band: #2f7fc0; --green: #60aa26; --dark: #17315f; --ink: #26344d; --soft: #f5f8fd; --line: #dce5f2; --tint: #edf4fb; --gold: #f5b700;
+  --bg: var(--soft); --surface: #ffffff; --text: var(--ink); --muted: #5d6b85; --heading: var(--dark); --viewer: #17315f; --viewer-edge: #0f2346;
+  --c0: #d9a21b; --c1: #e06a2c; --c2: #a3123a;
+  --uncertain: #a9b4c6; --hatch: repeating-linear-gradient(135deg, #a9b4c6 0 5px, #ccd3df 5px 10px);
+  --right: #3d6e17; --wrong: #a3203f; --warn: #8a5a0b; --mark: #17315f;  /* texts on white (contrast of at least 4.5:1); --mark is the corner of a wrong call */
+  --shadow: 0 0.35rem 1.2rem rgba(23, 49, 95, 0.07); --radius: 0.5rem;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--text); font: 15px/1.55 Roboto, system-ui, sans-serif; font-variant-numeric: tabular-nums; }
+/* one screen: the header, the work area and the threshold bar; only panels scroll, inside themselves */
+@media (min-width: 861px) { body { height: 100vh; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden; } }
+button, select, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+
+/* header: the gradient band of the wiki */
+header { background: linear-gradient(90deg, var(--blue), var(--band) 58%, var(--green)); color: #fff; padding: 0.7rem 1.4rem; display: flex; align-items: center; gap: 1.4rem; flex-wrap: wrap; }
+.brand { display: flex; align-items: center; gap: 0.7rem; margin-right: auto; }
+.brand img { width: 2rem; height: 2rem; }
+.brand h1 { font-size: 1.15rem; font-weight: 700; margin: 0; letter-spacing: 0; }
+.brand span { opacity: 0.85; font-size: 0.85rem; }
+.views { display: flex; background: rgba(255, 255, 255, 0.16); border-radius: 999px; padding: 0.2rem; }
+.views button { background: none; border: 0; color: #fff; padding: 0.35rem 1rem; border-radius: 999px; font-weight: 500; opacity: 0.85; }
+.views button[aria-selected="true"] { background: #fff; color: var(--blue); opacity: 1; }
+/* the threshold bar at the bottom of the screen */
+.gauge { background: var(--surface); border-top: 1px solid var(--line); padding: 0.7rem 1.4rem; display: flex; align-items: center; gap: 1.2rem; }
+.gauge label { display: flex; align-items: center; gap: 0.9rem; font-weight: 500; color: var(--heading); }
+.gauge input { accent-color: var(--blue); width: min(36rem, 50vw); }
+.gauge b { min-width: 2.6rem; font-weight: 700; color: var(--heading); }
+.gauge span { color: var(--muted); font-size: 0.85rem; }
+
+main { display: grid; grid-template-columns: 5.4rem minmax(0, 1fr) 25rem; gap: 1.2rem; padding: 1rem 1.4rem; min-height: 0; }
+main > div { min-width: 0; min-height: 0; }
+.view { display: none; min-width: 0; }
+.view.on { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+
+/* the index of the pictures, down the left */
+.index { overflow-y: auto; display: grid; grid-auto-rows: 3.4rem; gap: 0.45rem; align-content: start; padding: 0.2rem 0.5rem 0.2rem 0.2rem; scrollbar-width: thin; min-height: 0; }
+.index button { position: relative; padding: 0; border: 1px solid var(--line); border-radius: 0.3rem; overflow: hidden; background: var(--surface); transition: transform 0.2s ease; }
+.index button[aria-current="true"] { transform: translateX(0.35rem); box-shadow: 0 0 0 2px var(--blue), 0 4px 12px rgba(23, 49, 95, 0.18); }
+.index img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.index span { position: absolute; left: 0.25rem; bottom: 0.1rem; color: #fff; font-size: 0.7rem; font-weight: 700; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8); }
+h2 { color: var(--heading); font-size: 1.05rem; font-weight: 700; margin: 0 0 0.6rem; }
+.lead { color: var(--muted); font-size: 0.9rem; margin: 0 0 0.7rem; max-width: 110ch; }
+
+/* controls */
+.toolbar { display: flex; flex-wrap: wrap; gap: 0.5rem 1.2rem; align-items: center; margin-bottom: 0.9rem; }
+.group { display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; }
+.group > span { color: var(--muted); font-size: 0.85rem; margin-right: 0.15rem; }
+.pill { border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 0.15rem 0.7rem; font-size: 0.85rem; }
+.pill[aria-pressed="true"] { background: var(--blue); border-color: var(--blue); color: #fff; }
+.button { border: 1px solid var(--blue); background: var(--blue); color: #fff; border-radius: var(--radius); padding: 0.35rem 0.9rem; font-weight: 500; }
+.button.quiet { background: var(--surface); color: var(--blue); }
+.button:disabled { opacity: 0.5; cursor: default; }
+label.slider { display: flex; align-items: center; gap: 0.45rem; font-size: 0.85rem; color: var(--muted); }
+label.slider input { accent-color: var(--blue); width: 8rem; }
+label.slider b { color: var(--text); min-width: 4.2rem; }
+.switch { display: flex; align-items: center; gap: 0.45rem; font-size: 0.85rem; }
+.switch input { accent-color: var(--green); width: 1rem; height: 1rem; }
+
+/* the viewer: pictures on navy, as on a light box */
+/* the viewer: the picture on a white card, as large as the space allows (the stage keeps the picture's shape) */
+/* the viewer: the picture is the top card of a deck, as large as the space allows (the deck keeps the picture's shape) */
+.viewer { position: relative; flex: 1; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; padding: 0.9rem 3.6rem 0.2rem 0.9rem; }
+.fit { container-type: size; min-height: 0; display: grid; place-items: center; }
+.deck { position: relative; width: min(calc(100cqw - 1.4rem), calc((100cqh - 1.4rem) * var(--ar, 1.333))); }
+.deck::before, .deck::after { content: ""; position: absolute; inset: 0; background: var(--surface); border-radius: 0.4rem; box-shadow: 0 0 0 calc(0.45rem + 1px) var(--line); outline: 0.45rem solid var(--surface); }
+.deck::before { transform: translate(0.9rem, 0.9rem); opacity: 0.5; }
+.deck::after { transform: translate(0.45rem, 0.45rem); opacity: 0.8; }
+.stage { position: relative; z-index: 1; width: 100%; touch-action: none; user-select: none; border-radius: 0.3rem; overflow: hidden; background: var(--surface);
+  outline: 0.45rem solid var(--surface); box-shadow: 0 0 0 calc(0.45rem + 1px) var(--line), 0 0.8rem 2rem rgba(23, 49, 95, 0.16); }
+/* moving through the deck: the card on top lifts away and the next rises from the stack (going back, they swap) */
+.stage.leaving { position: absolute; inset: 0; z-index: 2; pointer-events: none; animation: leave 0.38s cubic-bezier(0.4, 0, 0.2, 1) forwards; }
+.stage.leaving.back { z-index: 0; animation-name: sink; }
+.stage.entering { animation: rise 0.38s cubic-bezier(0.2, 0, 0, 1); }
+.stage.entering.back { animation-name: drop; }
+@keyframes leave { to { transform: translateY(-16%) rotate(-2.5deg); opacity: 0; } }
+@keyframes rise { from { transform: translate(0.9rem, 0.9rem); box-shadow: none; } }
+@keyframes sink { to { transform: translate(0.9rem, 0.9rem); opacity: 0; } }
+@keyframes drop { from { transform: translateY(-16%) rotate(-2.5deg); opacity: 0; } }
+.stage img, .stage svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.arrow { position: absolute; top: 50%; transform: translateY(-50%); width: 2.4rem; height: 2.4rem; border-radius: 50%; border: 1px solid var(--line); background: var(--surface); color: var(--dark); font-size: 1.2rem; line-height: 1; display: grid; place-items: center; box-shadow: var(--shadow); }
+.arrow:hover { border-color: var(--blue); }
+.arrow.left { right: 0.5rem; top: calc(50% - 1.6rem); } .arrow.right { right: 0.5rem; top: calc(50% + 1.6rem); }  /* previous above next, beside the deck */
+.counter { color: var(--muted); font-size: 0.85rem; text-align: center; margin: 0.4rem 0 0; }
+
+/* gallery */
+.gallery { flex: 1; min-height: 0; overflow-y: auto; padding: 0.2rem; scrollbar-width: thin; }  /* it scrolls; the grid of tiles is inside it, so the rows keep the tiles square */
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(7.2rem, 1fr)); gap: 0.6rem; }
+.tile { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 0; overflow: hidden; display: block; text-align: left; box-shadow: var(--shadow); }
+.tile img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
+.tile .strip { display: flex; height: 0.4rem; }
+.tile .strip i { flex: 1; }
+.tile[aria-current="true"] { outline: 3px solid var(--blue); outline-offset: 1px; }
+.count { color: var(--muted); font-size: 0.85rem; }
+
+/* inspector */
+aside { min-height: 0; overflow-y: auto; display: grid; gap: 0.9rem; align-content: start; scrollbar-width: thin; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 1rem 1.1rem; }
+.card h3 { color: var(--heading); font-size: 0.95rem; margin: 0 0 0.6rem; font-weight: 700; }
+.card .crop { width: 100%; height: auto; border-radius: 0.35rem; display: block; margin-bottom: 0.8rem; background: var(--viewer); }
+.empty { color: var(--muted); font-size: 0.9rem; }
+.chip { display: inline-flex; align-items: center; gap: 0.35rem; border-radius: 999px; padding: 0.05rem 0.6rem; color: var(--ink); background: color-mix(in srgb, var(--k) 16%, white); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--k) 45%, white); font-size: 0.8rem; font-weight: 500; white-space: nowrap; }
+.chip::before { content: ""; width: 0.55rem; height: 0.55rem; border-radius: 50%; background: var(--k); }
+.chip.uncertain { background: var(--hatch); box-shadow: none; } .chip.uncertain::before { display: none; }
+
+/* the verdict and the probability ribbons: the one bold thing on the page */
+.verdict { display: flex; align-items: baseline; gap: 0.6rem; margin-bottom: 0.2rem; }
+.verdict strong { font-size: 1.6rem; line-height: 1.15; font-weight: 700; color: var(--heading); display: inline-flex; align-items: center; gap: 0.45rem; }
+.verdict strong i { width: 0.9rem; height: 0.9rem; border-radius: 50%; background: var(--k); }
+.verdict small { color: var(--muted); }
+.why { color: var(--muted); font-size: 0.85rem; margin: 0 0 0.8rem; }
+.classes { display: grid; gap: 0.35rem; margin-bottom: 0.9rem; }
+.cls { display: grid; grid-template-columns: 7.4rem 1fr 2.8rem; align-items: center; gap: 0.5rem; font-size: 0.85rem; }
+.cls .track { position: relative; height: 0.75rem; background: var(--line); border-radius: 999px; overflow: visible; }
+.cls .track i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 999px; transition: width 0.25s ease; }
+.cls .track .mark { position: absolute; top: -0.25rem; bottom: -0.25rem; width: 2px; background: var(--heading); opacity: 0.55; }
+.cls b { text-align: right; }
+.models { display: grid; gap: 0.45rem; }
+.model { display: grid; grid-template-columns: 7.4rem 1fr; gap: 0.5rem; align-items: center; font-size: 0.82rem; color: var(--muted); }
+.ribbon { display: flex; height: 1.2rem; border-radius: 0.3rem; overflow: hidden; background: var(--line); }
+.ribbon i { display: grid; place-items: center; color: #fff; font-size: 0.7rem; font-style: normal; font-weight: 500; overflow: hidden; transition: flex-basis 0.25s ease; }
+.truth { border-top: 1px solid var(--line); margin-top: 0.9rem; padding-top: 0.8rem; font-size: 0.9rem; }
+.truth p { margin: 0.2rem 0; }
+.ok { color: var(--right); font-weight: 700; } .no { color: var(--wrong); font-weight: 700; }
+table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
+td { padding: 0.35rem 0.2rem; border-bottom: 1px solid var(--line); }
+td:last-child { text-align: right; color: var(--muted); }
+.legend { display: flex; gap: 0.9rem; flex-wrap: wrap; font-size: 0.8rem; color: var(--muted); margin-top: 0.6rem; }
+.legend i { display: inline-block; width: 0.8rem; height: 0.8rem; border-radius: 0.2rem; vertical-align: -0.1rem; margin-right: 0.3rem; }
+.note { color: var(--muted); font-size: 0.8rem; margin: 0.6rem 0 0; }
+.warn { color: var(--warn); font-size: 0.85rem; margin: 0 0 0.6rem; }
+progress { width: 8rem; accent-color: var(--green); }
+/* a phone or a narrow window: the parts stack and the page scrolls */
+@media (max-width: 860px) {
+  main { grid-template-columns: 1fr; padding: 0.8rem; }
+  .index { order: 2; grid-auto-flow: column; grid-auto-columns: 4.6rem; overflow-x: auto; overflow-y: hidden; }
+  main > div { order: 1; } aside { order: 3; overflow: visible; }
+  .view.on { height: auto; }
+  .viewer { flex: none; height: 82vw; padding: 0.5rem 0.5rem 0.3rem; } .arrow { display: none; }
+  .gallery { max-height: 70vh; }
+  .gauge { position: sticky; bottom: 0; padding: 0.5rem 0.8rem; } .gauge label { flex: 1; } .gauge input { flex: 1; width: auto; } .gauge span { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><img id="logo" alt=""><div><h1>Patch playground</h1><span>Test fold of Experiment 2 · VGG16, DenseNet-121 and Swin-T</span></div></div>
+  <nav class="views" role="tablist">
+    <button role="tab" data-view="patches" aria-selected="true">Patches</button>
+    <button role="tab" data-view="picture" aria-selected="false">Picture</button>
+    <button role="tab" data-view="window" aria-selected="false">Grid</button>
+    <button role="tab" data-view="free" aria-selected="false">Free form</button>
+  </nav>
+</header>
+
+<main>
+  <nav class="index" id="index" aria-label="The test pictures"></nav>
+  <div>
+    <section class="view on" id="patches">
+      <p class="lead">The 656 patches of the test fold: the models never saw them in training. The strip under a patch shows its true label on the left and what the three models say together on the right; stripes mean they are below the confidence threshold.</p>
+      <div class="toolbar" id="filters"></div>
+      <div class="gallery" id="gallery"></div>
+    </section>
+
+    <section class="view" id="picture">
+      <p class="lead">A picture with its test patches, outlined in the class the three models give each one (dashed when below the threshold). Select a patch to see it; switch patches off to see how the call for the whole picture changes.</p>
+      <div class="viewer"><div class="fit"><div class="deck"><div class="stage" id="picture-stage"></div></div></div><button class="arrow left" data-step="-1" aria-label="Previous picture" title="Previous picture (↑)">↑</button><button class="arrow right" data-step="1" aria-label="Next picture" title="Next picture (↓)">↓</button><p class="counter" id="picture-counter"></p></div>
+      <div class="legend" id="picture-legend"></div>
+    </section>
+
+    <section class="view" id="window">
+      <p class="lead">The picture cut into a grid of square tiles, each classified by the three models together: a tile takes the colour of its class, and stripes when the models are below the threshold. Select a tile, or move from tile to tile with the arrow keys, to see it and what each model says. Where a tile is one of the labelled patches, its true label is shown.</p>
+      <div class="toolbar">
+        <label class="slider">Tile <input type="range" id="window-size" min="128" max="1024" step="64" value="512"><b id="window-size-value"></b></label>
+        <div class="group" aria-label="Move between tiles"><button class="pill" data-move="-1,0" aria-label="Tile to the left">←</button><button class="pill" data-move="0,-1" aria-label="Tile above">↑</button><button class="pill" data-move="0,1" aria-label="Tile below">↓</button><button class="pill" data-move="1,0" aria-label="Tile to the right">→</button></div>
+        <span class="count" id="tile-info"></span><progress id="scan-progress" value="0" max="1" hidden></progress><span class="count" id="scan-info"></span>
+      </div>
+      <p class="warn" id="window-warn"></p>
+      <div class="viewer"><div class="fit"><div class="deck"><div class="stage" id="window-map"></div></div></div><button class="arrow left" data-step="-1" aria-label="Previous picture" title="Previous picture (↑)">↑</button><button class="arrow right" data-step="1" aria-label="Next picture" title="Next picture (↓)">↓</button><p class="counter" id="window-picture-counter"></p></div>
+    </section>
+
+    <section class="view" id="free">
+      <p class="lead">Draw a box anywhere on the picture to classify that crop. A box that is not square, or not 512 pixels, is stretched to the models' input: they were trained on square patches of 512.</p>
+      <div class="toolbar"><label class="switch"><input type="checkbox" id="free-square" checked> Keep the box square</label><span class="count" id="free-info"></span></div>
+      <div class="viewer"><div class="fit"><div class="deck"><div class="stage" id="free-stage"></div></div></div><button class="arrow left" data-step="-1" aria-label="Previous picture" title="Previous picture (↑)">↑</button><button class="arrow right" data-step="1" aria-label="Next picture" title="Next picture (↓)">↓</button><p class="counter" id="free-counter"></p></div>
+    </section>
+  </div>
+
+  <aside id="inspector"></aside>
+</main>
+
+<footer class="gauge">
+  <label for="threshold">Confidence threshold <input type="range" id="threshold" min="34" max="95" value="60"> <b id="threshold-value">60%</b></label>
+  <span>Calls below the threshold count as uncertain.</span>
+</footer>
+
+<script>
+const HEX = ["--c0", "--c1", "--c2"].map((v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim());  // the class colours, set once in the stylesheet
+const $ = (id) => document.getElementById(id);
+// the logo and the icon are set here, after the base address exists: the browser reads an address in the markup before the script that sets the base has run
+$("logo").src = "logo.png";
+document.head.append(Object.assign(document.createElement("link"), { rel: "icon", href: "logo.png" }));
+const state = { view: "patches", picture: 0, patch: null, on: new Set(), confidentOnly: false, filters: { label: "", diagnosis: "", verdict: "", zoom: "" },
+  tile: 0, free: null, threshold: 0.6 };
+let D, request = 0;
+
+// ---------- small helpers
+const pct = (p) => `${Math.round(100 * p)}%`;
+const argmax = (v) => v.indexOf(Math.max(...v));
+const together = (byModel) => D.classes.map((_, k) => D.models.reduce((a, m) => a + byModel[m][k], 0) / D.models.length);
+const confident = (probs) => Math.max(...probs) >= state.threshold;
+const chip = (k, uncertain = false) => uncertain ? `<span class="chip uncertain">Uncertain</span>` : `<span class="chip" style="--k:${HEX[k]}">${D.classes[k]}</span>`;
+const short = (m) => ({ vgg16: "VGG16", densenet121: "DenseNet-121", swin_tiny_patch4_window7_224: "Swin-T" }[m] || m);
+const picture = () => D.pictures[state.picture];
+const allPatches = () => D.pictures.flatMap((p, i) => p.patches.map((q) => ({ ...q, pictureIndex: i, diagnosis: p.diagnosis })));
+const post = async (url, body) => (await fetch(url, { method: "POST", body: JSON.stringify(body) })).json();
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// crops are cut out of the picture in the page: a patch is an exact crop of its picture, so no patch image is needed
+const images = {};
+const loadImage = (src) => images[src] ||= new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = src; });
+const cropCanvas = (p, x, y, w, h) => `<canvas class="crop" data-picture="${p.index}" data-box="${x},${y},${w},${h}"></canvas>`;
+async function drawCrops() {
+  for (const c of document.querySelectorAll("canvas.crop")) {
+    const p = D.pictures[c.dataset.picture - 1], [x, y, w, h] = c.dataset.box.split(",").map(Number), image = await loadImage(p.image), k = image.naturalWidth / p.width, shrink = Math.min(1, 640 / Math.max(w, h));
+    c.width = Math.round(w * shrink); c.height = Math.round(h * shrink);
+    c.getContext("2d").drawImage(image, x * k, y * k, w * k, h * k, 0, 0, c.width, c.height);
+  }
+}
+
+// the call for a picture from some of its patches, with the rule of the training: the class with the highest mean probability, and the label that most patches have (a tie goes to the more severe class)
+function callOf(p, ids) {
+  const group = p.patches.filter((q) => ids.includes(q.id));
+  if (!group.length) return null;
+  const counts = D.classes.map((c) => group.filter((q) => q.label === c).length), label = D.classes[counts.lastIndexOf(Math.max(...counts))];
+  return Object.fromEntries([...D.models, D.together].map((name) => {
+    const probs = group.map((q) => name === D.together ? together(q.probabilities) : q.probabilities[name]), mean = D.classes.map((_, k) => probs.reduce((a, v) => a + v[k], 0) / probs.length);
+    return [name, { called: D.classes[argmax(mean)], label, probabilities: mean, patches: group.length }];
+  }));
+}
+// the labelled patches a crop overlaps: intersection over union and the share of the crop covered, largest overlap first
+function overlapsOf(p, x, y, w, h) {
+  return p.patches.map((q) => { const iw = Math.max(0, Math.min(q.x2, x + w) - Math.max(q.x, x)), ih = Math.max(0, Math.min(q.y2, y + h) - Math.max(q.y, y)), inter = iw * ih;
+    return { id: q.id, label: q.label, inter, iou: inter / (w * h + (q.x2 - q.x) * (q.y2 - q.y) - inter), covered: inter / (w * h) }; }).filter((m) => m.inter > 0).sort((a, b) => b.iou - a.iou);
+}
+
+// ---------- the readout: what the models say, against the threshold, and the true label when there is one
+function readout(byModel, truth) {
+  const mean = byModel[D.together] || together(byModel), top = argmax(mean), sure = confident(mean);
+  const verdict = sure ? `<strong style="--k:${HEX[top]}"><i></i>${D.classes[top]}</strong><small>likely, ${pct(mean[top])}</small>`
+    : `<strong>Uncertain</strong><small>leaning to ${D.classes[top]}, ${pct(mean[top])}</small>`;
+  const classes = D.classes.map((c, k) => `<div class="cls"><span>${c}</span><span class="track"><i style="width:${100 * mean[k]}%;background:${HEX[k]}"></i><span class="mark" style="left:${100 * state.threshold}%"></span></span><b>${pct(mean[k])}</b></div>`).join("");
+  const models = D.models.map((m) => `<div class="model"><span>${short(m)}</span><span class="ribbon">${byModel[m].map((p, k) => `<i style="flex-basis:${100 * p}%;background:${HEX[k]}">${p > 0.14 ? pct(p) : ""}</i>`).join("")}</span></div>`).join("");
+  return `<div class="verdict">${verdict}</div><p class="why">The three models together. The line on each bar is the confidence threshold, ${pct(state.threshold)}.</p>
+    <div class="classes">${classes}</div><div class="models">${models}</div>${truth ? `<div class="truth">${truth(top, sure)}</div>` : ""}`;
+}
+const truthOfLabel = (label) => (top, sure) => { const k = D.classes.indexOf(label), right = top === k;
+  return `<p>True label ${chip(k)}</p><p>${!sure ? "The models are not confident enough to call it." : right ? '<span class="ok">The models are right.</span>' : '<span class="no">The models are wrong.</span>'}</p>`; };
+
+// ---------- views
+function show(view) {
+  state.view = view;
+  document.querySelectorAll(".views button").forEach((b) => b.setAttribute("aria-selected", b.dataset.view === view));
+  document.querySelectorAll(".view").forEach((v) => v.classList.toggle("on", v.id === view));
+  render();
+}
+function render() { renderIndex(); ({ patches: renderPatches, picture: renderPicture, window: renderWindow, free: renderFree })[state.view](); }
+// the index of the pictures: a click opens that picture (in the picture view when the patches are shown)
+function renderIndex() {
+  const current = state.view === "patches" ? -1 : state.picture;
+  if (!$("index").children.length) {
+    $("index").innerHTML = D.pictures.map((p, i) => `<button data-i="${i}" title="Picture ${p.index}" aria-label="Picture ${p.index}"><img loading="lazy" src="${p.image}" alt=""><span>${p.index}</span></button>`).join("");
+    $("index").querySelectorAll("button").forEach((b) => b.onclick = () => { stepPicture(+b.dataset.i - state.picture, false); if (state.view === "patches") show("picture"); else render(); });
+  }
+  $("index").querySelectorAll("button").forEach((b) => b.setAttribute("aria-current", +b.dataset.i === current));
+  $("index").querySelector('[aria-current="true"]')?.scrollIntoView({ block: "nearest" });
+}
+document.querySelectorAll(".views button").forEach((b) => b.onclick = () => show(b.dataset.view));
+$("threshold").oninput = () => { state.threshold = $("threshold").value / 100; $("threshold-value").textContent = `${$("threshold").value}%`; render(); };
+
+function stage(el, p) {
+  el.style.aspectRatio = `${p.width} / ${p.height}`; el.parentNode.style.setProperty("--ar", p.width / p.height);
+  el.innerHTML = `<img src="${p.image}" alt="picture ${p.index}"><svg viewBox="0 0 ${p.width} ${p.height}"></svg>`;
+  return el.querySelector("svg");
+}
+// the card on top lifts away (a copy of it, while the stage below draws the next picture); without motion when the reader asks for less
+function lift(back) {
+  const stage = document.querySelector(".view.on .stage");
+  if (!stage || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const ghost = stage.cloneNode(true);
+  ghost.removeAttribute("id"); ghost.classList.remove("entering", "back"); ghost.classList.add("leaving"); ghost.classList.toggle("back", back);
+  stage.parentNode.append(ghost); ghost.addEventListener("animationend", () => ghost.remove());
+  stage.classList.remove("entering", "back"); void stage.offsetWidth; stage.classList.add("entering"); stage.classList.toggle("back", back);
+}
+function stepPicture(delta, draw = true) { if (delta) lift(delta < 0); state.picture = (state.picture + delta + D.pictures.length) % D.pictures.length; state.patch = null; state.on = new Set(picture().patches.map((q) => q.id)); state.free = null; state.tile = 0; if (draw) render(); }
+document.querySelectorAll("[data-step]").forEach((b) => b.onclick = () => stepPicture(+b.dataset.step));
+const counterText = () => `Picture ${state.picture + 1} of ${D.pictures.length} · ${picture().patches.length} test patches · NDB-UFES diagnosis: ${picture().diagnosis}`;
+
+// ---------- patches
+function filtered() {
+  const f = state.filters;
+  return allPatches().filter((q) => {
+    const mean = together(q.probabilities), top = argmax(mean), sure = confident(mean);
+    const verdict = !sure ? "uncertain" : D.classes[top] === q.label ? "right" : "wrong";
+    return (!f.label || q.label === f.label) && (!f.diagnosis || q.diagnosis === f.diagnosis) && (!f.zoom || q.zoom === f.zoom) && (!f.verdict || f.verdict === verdict);
+  });
+}
+function renderFilters() {
+  const groups = { label: ["True label", D.classes], diagnosis: ["Picture diagnosis", [...new Set(D.pictures.map((p) => p.diagnosis))]], verdict: ["The models are", ["right", "wrong", "uncertain"]], zoom: ["Possible zoom", ["10x", "40x"]] };
+  $("filters").innerHTML = Object.entries(groups).map(([key, [name, values]]) => `<div class="group"><span>${name}</span>${["", ...values].map((v) => `<button class="pill" data-key="${key}" data-value="${esc(v)}" aria-pressed="${state.filters[key] === v}">${v ? esc(v) : "All"}</button>`).join("")}</div>`).join("") + `<span class="count" id="patch-count"></span>`;
+  $("filters").querySelectorAll(".pill").forEach((b) => b.onclick = () => { state.filters[b.dataset.key] = b.dataset.value; renderPatches(); });
+}
+function renderPatches() {
+  renderFilters();
+  const list = filtered();
+  $("patch-count").textContent = `${list.length} of ${allPatches().length} patches`;
+  $("gallery").innerHTML = `<div class="tiles">` + list.map((q) => { const mean = together(q.probabilities), top = argmax(mean), sure = confident(mean);
+    return `<button class="tile" data-id="${q.id}" aria-current="${state.patch === q.id}" title="${q.id}: true label ${q.label}; the models say ${sure ? D.classes[top] : "uncertain"}"><img loading="lazy" src="${q.thumb}" alt="${q.id}"><span class="strip"><i style="background:${HEX[D.classes.indexOf(q.label)]}"></i><i style="background:${sure ? HEX[top] : "var(--hatch)"}"></i></span></button>`; }).join("") + "</div>";
+  $("gallery").querySelectorAll(".tile").forEach((t) => t.onclick = () => selectPatch(t.dataset.id));
+  inspectPatch(list);
+}
+function selectPatch(id) {
+  state.patch = id;
+  document.querySelectorAll(".tile").forEach((t) => t.setAttribute("aria-current", t.dataset.id === id));
+  document.querySelector(`.tile[data-id="${id}"]`)?.scrollIntoView({ block: "nearest" });
+  inspectPatch(filtered());
+}
+function inspectPatch(list) {
+  const q = state.patch && allPatches().find((x) => x.id === state.patch);
+  if (!q) { $("inspector").innerHTML = `<div class="card"><h3>A patch</h3><p class="empty">Select a patch to see what the models say about it.</p></div>`; return; }
+  const position = list ? list.findIndex((x) => x.id === q.id) : -1;
+  $("inspector").innerHTML = `<div class="card"><h3>Patch ${q.id}</h3>${cropCanvas(D.pictures[q.pictureIndex], q.x, q.y, q.x2 - q.x, q.y2 - q.y)}
+    ${readout(q.probabilities, truthOfLabel(q.label))}
+    <p class="note">From picture ${q.pictureIndex + 1} (NDB-UFES diagnosis: ${esc(q.diagnosis)}), possible zoom ${q.zoom}. The stored predictions: the mean of the five fold runs of each model.</p>
+    <div class="toolbar" style="margin:0.8rem 0 0">${position >= 0 ? `<button class="button quiet" id="prev-patch">Previous</button><button class="button quiet" id="next-patch">Next</button><span class="count">${position + 1} of ${list.length}</span>` : ""}<button class="button" id="open-picture">Open its picture</button></div></div>`;
+  if (position >= 0) { $("prev-patch").onclick = () => movePatch(list, -1); $("next-patch").onclick = () => movePatch(list, 1); }
+  $("open-picture").onclick = () => { state.picture = q.pictureIndex; state.on = new Set(picture().patches.map((x) => x.id)); show("picture"); };
+  drawCrops();
+}
+function movePatch(list, delta) { const i = list.findIndex((x) => x.id === state.patch); selectPatch(list[(i + delta + list.length) % list.length].id); }
+
+// ---------- picture
+function renderPicture() {
+  const p = picture(), svg = stage($("picture-stage"), p);
+  $("picture-counter").textContent = counterText();
+  svg.innerHTML = p.patches.map((q) => { const mean = together(q.probabilities), top = argmax(mean), sure = confident(mean), on = state.on.has(q.id), selected = q.id === state.patch;
+    return `<rect data-id="${q.id}" x="${q.x}" y="${q.y}" width="${q.x2 - q.x}" height="${q.y2 - q.y}" fill="${on ? "rgba(255,255,255,0)" : "rgba(10,20,40,.55)"}" stroke="${selected ? "#f5b700" : HEX[top]}" stroke-width="${selected ? 14 : on ? 8 : 4}" stroke-dasharray="${sure ? "" : "26 16"}" style="cursor:pointer"><title>${q.id}</title></rect>`; }).join("");
+  svg.querySelectorAll("rect").forEach((r) => r.onclick = () => { state.patch = r.dataset.id; renderPicture(); });
+  $("picture-legend").innerHTML = D.classes.map((c, k) => `<span><i style="background:${HEX[k]}"></i>${c}</span>`).join("") + `<span>Dashed: below the threshold · dark: switched off · gold: selected</span>`;
+  const counted = p.patches.filter((q) => state.on.has(q.id) && (!state.confidentOnly || confident(together(q.probabilities)))).map((q) => q.id);
+  const call = callOf(p, counted);
+  const q = p.patches.find((x) => x.id === state.patch);
+  const classButtons = D.classes.map((c, k) => { const ids = p.patches.filter((x) => x.label === c).map((x) => x.id); if (!ids.length) return "";
+    const allOn = ids.every((id) => state.on.has(id)); return `<button class="pill" data-class="${k}" aria-pressed="${allOn}">${c}</button>`; }).join("");
+  $("inspector").innerHTML = `<div class="card"><h3>The whole picture</h3>
+    ${!call ? `<p class="empty">No patch is counted. Switch some on.</p>` : `${readout(Object.fromEntries(Object.entries(call).map(([k, v]) => [k, v.probabilities])))}
+      <div class="truth"><p>NDB-UFES diagnosis: <b>${esc(p.diagnosis)}</b></p><p>Label most of the counted patches have: ${chip(D.classes.indexOf(call[D.together].label))}</p><p class="note">From ${call[D.together].patches} of ${p.patches.length} patches, with the rule of the training: the class with the highest mean probability.</p></div>`}
+    <div class="toolbar" style="margin:0.9rem 0 0"><div class="group"><span>Count patches labelled</span>${classButtons}</div>
+    <label class="switch"><input type="checkbox" id="confident-only" ${state.confidentOnly ? "checked" : ""}> Count only patches above the threshold</label></div></div>
+    ${q ? `<div class="card"><h3>Patch ${q.id}</h3>${cropCanvas(p, q.x, q.y, q.x2 - q.x, q.y2 - q.y)}${readout(q.probabilities, truthOfLabel(q.label))}
+      <label class="switch" style="margin-top:0.8rem"><input type="checkbox" id="count-patch" ${state.on.has(q.id) ? "checked" : ""}> Count this patch in the picture</label></div>` : `<div class="card"><p class="empty">Select an outline to see that patch.</p></div>`}`;
+  $("inspector").querySelectorAll("[data-class]").forEach((b) => b.onclick = () => { const c = D.classes[b.dataset.class], ids = p.patches.filter((x) => x.label === c).map((x) => x.id), allOn = ids.every((id) => state.on.has(id));
+    ids.forEach((id) => allOn ? state.on.delete(id) : state.on.add(id)); renderPicture(); });
+  $("confident-only").onchange = (e) => { state.confidentOnly = e.target.checked; renderPicture(); };
+  if (q) $("count-patch").onchange = (e) => { e.target.checked ? state.on.add(q.id) : state.on.delete(q.id); renderPicture(); };
+  drawCrops();
+}
+
+// ---------- a crop and what the models say about it, with its true label when it is a labelled patch
+function showCrop(p, box, title, byModel, source) {
+  const near = overlapsOf(p, box.x, box.y, box.w, box.h), known = near.length && near[0].iou >= D.known_iou ? near[0] : null;
+  const truth = known ? (top, sure) => truthOfLabel(known.label)(top, sure) + `<p class="note">This crop is patch ${known.id} (overlap ${pct(known.iou)}).</p>`
+    : () => `<p><b>No label here.</b> The crop is not one of the labelled patches, so there is only what the models say.</p>${near.length ? `<p class="note">It overlaps ${near.slice(0, 3).map((m) => `${m.id} (${esc(m.label)}, ${pct(m.covered)} of the crop)`).join(", ")}.</p>` : ""}`;
+  $("inspector").innerHTML = `<div class="card"><h3>${title}</h3>${cropCanvas(p, box.x, box.y, box.w, box.h)}${readout(byModel, truth)}<p class="note">${source}</p></div>`;
+  drawCrops();
+}
+const STORED = "From the grid computed beforehand: the checkpoint of one fold run of each model, so it can differ from the stored predictions of a patch.";
+async function classifyLive(box, title) {  // the free form: needs the server
+  const p = picture(), mine = ++request;
+  if (!D.live) { $("inspector").innerHTML = `<div class="card"><h3>${title}</h3>${cropCanvas(p, box.x, box.y, box.w, box.h)}<p class="warn">The free form needs the models, which are not on this page. Run the playground on a computer that has them to classify any crop.</p></div>`; drawCrops(); return; }
+  $("inspector").innerHTML = `<div class="card"><h3>${title}</h3>${cropCanvas(p, box.x, box.y, box.w, box.h)}<p class="empty">Classifying… (the first time loads the models)</p></div>`; drawCrops();
+  const r = await post("api/classify", { picture: p.id, ...box });
+  if (mine !== request) return;
+  if (r.error) { $("inspector").innerHTML = `<div class="card"><h3>${title}</h3><p class="warn">${esc(r.error)}</p></div>`; return; }
+  showCrop(p, box, title, r.probabilities, "Live: the checkpoint of one fold run of each model, so it can differ from the stored predictions of a patch.");
+}
+function outlines(p, width = 6) { return p.patches.map((q) => `<rect x="${q.x}" y="${q.y}" width="${q.x2 - q.x}" height="${q.y2 - q.y}" fill="none" stroke="${HEX[D.classes.indexOf(q.label)]}" stroke-width="${width}" stroke-dasharray="22 12" opacity=".9"/>`).join(""); }
+
+// ---------- grid: the picture as a grid of square tiles
+function positions(length, size) { const out = []; for (let x = 0; x + size <= length; x += size) out.push(x); if (out[out.length - 1] !== length - size) out.push(length - size); return out; }  // as window_positions on the server, with the step equal to the tile
+const tileSize = () => Math.min(+$("window-size").value, picture().width, picture().height);
+function grid() { const p = picture(), s = tileSize(), xs = positions(p.width, s), ys = positions(p.height, s); return { s, xs, ys, corners: ys.flatMap((y) => xs.map((x) => [x, y])) }; }
+function moveTile(dx, dy) {
+  const g = grid(), col = Math.max(0, Math.min(g.xs.length - 1, state.tile % g.xs.length + dx)), row = Math.max(0, Math.min(g.ys.length - 1, Math.floor(state.tile / g.xs.length) + dy));
+  state.tile = row * g.xs.length + col; renderWindow();
+}
+document.querySelectorAll("[data-move]").forEach((b) => b.onclick = () => moveTile(...b.dataset.move.split(",").map(Number)));
+const grids = {};  // `${picture index}:${size}` -> for each tile, the probabilities of each model
+const perModel = (flat) => Object.fromEntries(D.models.map((m, i) => [m, flat.slice(3 * i, 3 * i + 3)]));
+async function gridOf(p, size) {
+  const key = `${p.index}:${size}`;
+  if (grids[key]) return grids[key];
+  const stored = D.grids && D.grids[p.index] && D.grids[p.index][size];
+  if (stored) return grids[key] = stored.map(perModel);
+  if (!D.live) return null;
+  const r = await post("api/scan", { picture: p.id, size, step: size });
+  if (r.error) { $("scan-info").textContent = r.error; return null; }
+  $("scan-progress").hidden = false; $("scan-info").textContent = `Classifying ${r.total} tiles…`;
+  while (true) {
+    const j = await (await fetch(`api/scan/${r.job}`)).json();
+    $("scan-progress").value = j.done / j.total;
+    if (j.finished) { $("scan-progress").hidden = true; $("scan-info").textContent = j.error || ""; return j.error ? null : grids[key] = j.probabilities.map((tile) => Object.fromEntries(D.models.map((m, i) => [m, tile[i]]))); }
+    await new Promise((ok) => setTimeout(ok, 300));
+  }
+}
+async function renderWindow() {
+  const p = picture(), g = grid(), mine = ++request;
+  $("window-size").max = Math.min(1024, p.width, p.height);
+  state.tile = Math.min(state.tile || 0, g.corners.length - 1);
+  $("window-size-value").textContent = `${g.s} px`;
+  $("tile-info").textContent = `Tile ${state.tile + 1} of ${g.corners.length} (${g.xs.length} × ${g.ys.length})`;
+  $("window-warn").textContent = g.s === 512 ? "" : `Tiles of ${g.s} pixels are resized to the models' input. They were trained on patches of 512, so this is outside what they learned.`;
+  $("window-picture-counter").textContent = counterText();
+  const draw = (tiles) => {
+    const svg = stage($("window-map"), p), font = Math.round(g.s * 0.075);
+    svg.innerHTML = `<defs><pattern id="unsure" width="24" height="24" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="12" height="24" fill="rgba(154,166,187,.55)"/></pattern></defs>`
+      + g.corners.map(([x, y], i) => { const v = tiles && together(tiles[i]), k = v && argmax(v), sure = v && confident(v);
+        const fill = !v ? "rgba(255,255,255,0)" : sure ? HEX[k] : "url(#unsure)";
+        return `<g data-tile="${i}" style="cursor:pointer"><rect x="${x}" y="${y}" width="${g.s}" height="${g.s}" fill="${fill}" fill-opacity="${v && sure ? 0.32 : 1}" stroke="rgba(255,255,255,.85)" stroke-width="4"/>`
+          + (v ? `<text x="${x + font * 0.6}" y="${y + font * 1.4}" font-size="${font}" font-weight="700" fill="#fff" stroke="rgba(15,35,70,.75)" stroke-width="${font / 6}" paint-order="stroke">${sure ? D.classes[k] : "Uncertain"} ${pct(v[k])}</text>` : "") + "</g>"; }).join("")
+      + (() => { const [x, y] = g.corners[state.tile]; return `<rect x="${x}" y="${y}" width="${g.s}" height="${g.s}" fill="none" stroke="#f5b700" stroke-width="14" pointer-events="none"/>`; })();
+    svg.querySelectorAll("[data-tile]").forEach((t) => t.onclick = () => { state.tile = +t.dataset.tile; renderWindow(); });
+  };
+  const [x, y] = g.corners[state.tile], box = { x, y, w: g.s, h: g.s }, title = `Tile ${state.tile + 1}`;
+  draw(grids[`${p.index}:${g.s}`] && grids[`${p.index}:${g.s}`]);
+  const tiles = await gridOf(p, g.s);
+  if (mine !== request) return;
+  if (!tiles) { $("inspector").innerHTML = `<div class="card"><h3>${title}</h3><p class="warn">This tile size was not computed beforehand, and the models are not on this page.</p></div>`; return; }
+  draw(tiles);
+  showCrop(p, box, title, tiles[state.tile], STORED);
+}
+$("window-size").oninput = () => { state.tile = 0; renderWindow(); };
+
+// ---------- free form
+function renderFree() {
+  const p = picture(), svg = stage($("free-stage"), p);
+  $("free-counter").textContent = counterText();
+  const draw = () => { svg.innerHTML = outlines(p, 5) + (state.free ? `<rect x="${state.free.x}" y="${state.free.y}" width="${state.free.w}" height="${state.free.h}" fill="rgba(245,183,0,.15)" stroke="#f5b700" stroke-width="10"/>` : ""); };
+  draw();
+  let start = null;
+  const point = (e) => { const r = svg.getBoundingClientRect(), k = p.width / r.width; return [Math.max(0, Math.min(p.width, (e.clientX - r.left) * k)), Math.max(0, Math.min(p.height, (e.clientY - r.top) * k))]; };
+  svg.onpointerdown = (e) => { start = point(e); svg.setPointerCapture(e.pointerId); };
+  svg.onpointermove = (e) => { if (!start) return; const [x, y] = point(e); let w = Math.abs(x - start[0]), h = Math.abs(y - start[1]);
+    if ($("free-square").checked) { w = h = Math.min(Math.max(w, h), x < start[0] ? start[0] : p.width - start[0], y < start[1] ? start[1] : p.height - start[1]); }
+    state.free = { x: Math.round(x < start[0] ? start[0] - w : start[0]), y: Math.round(y < start[1] ? start[1] - h : start[1]), w: Math.round(w), h: Math.round(h) }; draw(); };
+  svg.onpointerup = () => { start = null; if (state.free && Math.min(state.free.w, state.free.h) >= 32) { freeInfo(); classifyLive(state.free, "Your crop"); } };
+  if (state.free) { freeInfo(); classifyLive(state.free, "Your crop"); }
+  else $("inspector").innerHTML = `<div class="card"><h3>Your crop</h3><p class="empty">Drag on the picture to draw a box. The labelled patches are outlined with dashes, in the colour of their true label.${D.live ? "" : " The models are not on this page, so a crop cannot be classified here."}</p></div>`;
+}
+function freeInfo() { const f = state.free; $("free-info").textContent = `${f.w} × ${f.h} pixels at (${f.x}, ${f.y})${f.w !== f.h ? " · stretched to a square" : ""}${Math.max(f.w, f.h) !== 512 ? " · resized to the models' input" : ""}`; }
+
+// ---------- keys: left and right go to the previous and next item of the view; up and down move the window
+document.addEventListener("keydown", (e) => {
+  if (e.target instanceof Element && e.target.matches("input:not([type=checkbox]), select")) return;  // a focused slider keeps its own arrows
+  const keys = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }, k = keys[e.key];
+  if (!k) return;
+  if (state.view === "window") { moveTile(...k); e.preventDefault(); return; }  // the grid: all four move from tile to tile
+  if (state.view === "picture" || state.view === "free") { stepPicture(k[1] || k[0]); e.preventDefault(); return; }  // up and down go through the deck (left and right too, until they go through the patches)
+  if (!k[0]) return;
+  if (state.view === "patches" && state.patch) movePatch(filtered(), k[0]);
+  e.preventDefault();
+});
+
+// the data sits next to the page (a static copy) or comes from the server, which answers data.json too
+fetch("data.json").then((r) => r.json()).then((d) => {
+  D = d; state.on = new Set(picture().patches.map((q) => q.id));
+  const wrong = D.pictures.filter((p) => { const mine = callOf(p, p.patches.map((q) => q.id)); return !p.check || Object.keys(p.check).some((n) => mine[n].called !== p.check[n].called || mine[n].label !== p.check[n].label || mine[n].probabilities.some((v, k) => Math.abs(v - p.check[n].probabilities[k]) > 1e-3)); });
+  if (wrong.length) console.warn(`The call of ${wrong.length} pictures differs from the one computed in Python`, wrong.map((p) => p.index));
+  render();
+});
+</script>
+</body>
+</html>
